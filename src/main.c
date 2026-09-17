@@ -1,6 +1,7 @@
 #include "common.h"
 #include "parser.h"
 #include "executor.h"
+#include "jobs.h"
 #include <ctype.h>
 
 static void print_prompt(void) {
@@ -34,11 +35,12 @@ int main(int argc, char **argv) {
     size_t len = 0;
 
     while (1) {
+        check_and_notify_jobs();
         print_prompt();
 
         ssize_t nread = getline(&line, &len, stdin);
         if (nread == -1) {
-            /* EOF reached (e.g. Ctrl+D or end of file) */
+            /* EOF reached (e.g. Ctrl+D or end of pipe) */
             if (g_shell.is_interactive) {
                 printf("\n");
             }

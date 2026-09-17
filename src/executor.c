@@ -1,5 +1,4 @@
 #include "executor.h"
-#include <signal.h>
 
 ShellState g_shell = {
     .last_exit_status = 0,
@@ -11,8 +10,31 @@ ShellState g_shell = {
 void shell_init(void) {
     g_shell.shell_terminal = STDIN_FILENO;
     g_shell.is_interactive = isatty(g_shell.shell_terminal);
-    g_shell.shell_pgid = getpgrp();
     g_shell.last_exit_status = 0;
+
+    if (g_shell.is_interactive) {
+        /* Loop until we are in the foreground process group */
+        while (tcgetpgrp(g_shell.shell_terminal) != (g_shell.shell_pgid = getpgrp())) {
+            kill(-g_shell.shell_pgid, SIGTTIN);
+        }
+
+        /* Set up signal dispositions for interactive shell */
+        signals_init_shell();
+
+        /* Place shell into its own process group */
+        g_shell.shell_pgid = getpid();
+        if (setpgid(g_shell.shell_pgid, g_shell.shell_pgid) < 0) {
+            forge_perror("setpgid");
+        }
+
+        /* Acquire terminal control */
+        tcsetpgrp(g_shell.shell_terminal, g_shell.shell_pgid);
+
+        /* Save default terminal attributes */
+        tcgetattr(g_shell.shell_terminal, &g_shell.shell_tmodes);
+    }
+
+    jobs_init();
 }
 
 int apply_redirections(const Command *cmd) {
@@ -67,25 +89,52 @@ int apply_redirections(const Command *cmd) {
     return 0;
 }
 
+static int execute_single_builtin(Command *cmd) {
+    /* Save standard file descriptors */
+    int saved_stdin = dup(STDIN_FILENO);
+    int saved_stdout = dup(STDOUT_FILENO);
+    int saved_stderr = dup(STDERR_FILENO);
+
+    int status = 0;
+    if (apply_redirections(cmd) < 0) {
+        status = 1;
+    } else {
+        status = execute_builtin(cmd->argc, cmd->argv);
+    }
+
+    /* Restore file descriptors */
+    dup2(saved_stdin, STDIN_FILENO);
+    dup2(saved_stdout, STDOUT_FILENO);
+    dup2(saved_stderr, STDERR_FILENO);
+
+    close(saved_stdin);
+    close(saved_stdout);
+    close(saved_stderr);
+
+    g_shell.last_exit_status = status;
+    return status;
+}
+
 int execute_pipeline(JobPipeline *pipeline) {
     if (!pipeline || !pipeline->first_cmd) {
         return 0;
     }
 
-    /* Count commands */
+    /* Count commands in the pipeline */
     int num_cmds = 0;
     for (Command *c = pipeline->first_cmd; c; c = c->next) {
         num_cmds++;
     }
 
-    /* Check for single builtin 'exit' (expanded in Milestone 4) */
-    if (num_cmds == 1 && pipeline->first_cmd->argc > 0 &&
-        strcmp(pipeline->first_cmd->argv[0], "exit") == 0) {
-        int code = (pipeline->first_cmd->argc > 1) ? atoi(pipeline->first_cmd->argv[1]) : g_shell.last_exit_status;
-        exit(code);
+    /* If it's a single command and it's a builtin, run in-process (unless background) */
+    if (num_cmds == 1 && !pipeline->is_background && is_builtin(pipeline->first_cmd->argv[0])) {
+        return execute_single_builtin(pipeline->first_cmd);
     }
 
-    pid_t *pids = xmalloc(num_cmds * sizeof(pid_t));
+    /* Allocate Job entry for tracking */
+    Job *job = job_create(0, pipeline->raw_line);
+
+    pid_t pgid = 0;
     int prev_pipe_read = -1;
     Command *cmd = pipeline->first_cmd;
 
@@ -95,7 +144,6 @@ int execute_pipeline(JobPipeline *pipeline) {
             if (pipe(pipefds) < 0) {
                 forge_perror("pipe");
                 g_shell.last_exit_status = 1;
-                free(pids);
                 return 1;
             }
         }
@@ -111,24 +159,39 @@ int execute_pipeline(JobPipeline *pipeline) {
                 close(prev_pipe_read);
             }
             g_shell.last_exit_status = 1;
-            free(pids);
             return 1;
         }
 
         if (pid == 0) {
             /* Child process */
+            pid_t my_pid = getpid();
+            if (pgid == 0) pgid = my_pid;
+
+            /* Put child in job's process group */
+            setpgid(0, pgid);
+
+            /* If foreground and interactive, assign terminal control */
+            if (!pipeline->is_background && g_shell.is_interactive) {
+                tcsetpgrp(g_shell.shell_terminal, pgid);
+            }
+
+            /* Restore default signal handlers */
+            signals_reset_child();
+
+            /* Wire pipeline input */
             if (prev_pipe_read != -1) {
                 if (dup2(prev_pipe_read, STDIN_FILENO) < 0) {
-                    forge_perror("dup2 prev pipe");
+                    forge_perror("dup2 pipe in");
                     _exit(1);
                 }
                 close(prev_pipe_read);
             }
 
+            /* Wire pipeline output */
             if (i < num_cmds - 1) {
-                close(pipefds[0]); /* Child does not read from current pipe */
+                close(pipefds[0]);
                 if (dup2(pipefds[1], STDOUT_FILENO) < 0) {
-                    forge_perror("dup2 pipe write");
+                    forge_perror("dup2 pipe out");
                     _exit(1);
                 }
                 close(pipefds[1]);
@@ -139,10 +202,15 @@ int execute_pipeline(JobPipeline *pipeline) {
                 _exit(1);
             }
 
+            /* Execute builtin if part of a pipeline */
+            if (is_builtin(cmd->argv[0])) {
+                int code = execute_builtin(cmd->argc, cmd->argv);
+                _exit(code);
+            }
+
             /* Execute external command */
             execvp(cmd->argv[0], cmd->argv);
 
-            /* Error handling if execvp returns */
             if (errno == ENOENT) {
                 fprintf(stderr, "forge: %s: command not found\n", cmd->argv[0]);
                 _exit(127);
@@ -156,47 +224,32 @@ int execute_pipeline(JobPipeline *pipeline) {
         }
 
         /* Parent process */
-        pids[i] = pid;
+        if (pgid == 0) {
+            pgid = pid;
+            job->pgid = pgid;
+        }
+
+        /* Setpgid in parent as well to eliminate race conditions */
+        setpgid(pid, pgid);
+
+        /* Add process to job */
+        job_add_process(job, pid);
 
         if (prev_pipe_read != -1) {
             close(prev_pipe_read);
         }
 
         if (i < num_cmds - 1) {
-            close(pipefds[1]); /* Parent does not write to pipe */
+            close(pipefds[1]);
             prev_pipe_read = pipefds[0];
         } else {
             prev_pipe_read = -1;
         }
     }
 
-    /* Wait for all child processes in pipeline */
-    int last_status = 0;
-    for (int i = 0; i < num_cmds; i++) {
-        int status = 0;
-        pid_t wpid;
-        do {
-            wpid = waitpid(pids[i], &status, 0);
-        } while (wpid == -1 && errno == EINTR);
-
-        if (i == num_cmds - 1) {
-            last_status = status;
-        }
+    if (pipeline->is_background) {
+        return put_job_in_background(job, false);
+    } else {
+        return put_job_in_foreground(job, false);
     }
-
-    free(pids);
-
-    if (WIFEXITED(last_status)) {
-        g_shell.last_exit_status = WEXITSTATUS(last_status);
-    } else if (WIFSIGNALED(last_status)) {
-        int sig = WTERMSIG(last_status);
-        g_shell.last_exit_status = 128 + sig;
-        if (sig == SIGSEGV) {
-            fprintf(stderr, "forge: Segmentation fault (core dumped)\n");
-        } else if (sig == SIGABRT) {
-            fprintf(stderr, "forge: Aborted (core dumped)\n");
-        }
-    }
-
-    return g_shell.last_exit_status;
 }

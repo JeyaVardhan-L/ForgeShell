@@ -16,6 +16,7 @@
 #include <stdbool.h>
 #include <errno.h>
 #include <sys/types.h>
+#include <limits.h>
 
 #define FORGE_VERSION "0.1.0"
 #define FORGE_DEFAULT_PROMPT "forge> "
