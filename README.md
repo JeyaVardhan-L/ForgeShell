@@ -1,8 +1,41 @@
 # ForgeShell 🛡️
 
-**ForgeShell** is a resource-aware Unix shell built from scratch in C for Linux. It focuses on systems programming fundamentals: low-level process lifecycle management, Unix file descriptor plumbing, inter-process communication pipelines, POSIX terminal job control, and deep Linux `/proc` virtual filesystem observability.
+[![CI](https://github.com/JeyaVardhan-L/ForgeShell/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/JeyaVardhan-L/ForgeShell/actions/workflows/ci.yml)
+![Language: C11](https://img.shields.io/badge/language-C11-blue)
+![Platform: Linux](https://img.shields.io/badge/platform-Linux-lightgrey)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-ForgeShell is designed not as a clone of Bash, but as an educational, transparent, and robust implementation demonstrating how real operating systems execute processes, arbitrate terminal access, deliver signals, and monitor system resources.
+**A resource-aware Unix shell built from scratch in C.** It runs pipelines, redirections and background/foreground jobs using raw POSIX system calls, and adds built-in commands that read live process data straight from the Linux kernel's `/proc` filesystem.
+
+- **Shell core:** `fork`/`execvp`/`waitpid`, multi-stage pipes, `<` `>` `>>` `2>` redirection, quoting.
+- **Job control:** process groups, terminal hand-off (`tcsetpgrp`), `Ctrl+Z`, `&`, `jobs`, `fg`, `bg`.
+- **Observability:** `inspect <pid>`, `monitor <pid>` and `ps`, reporting memory, CPU, threads and open files, with the `/proc` source of every number.
+- **Tested:** 24 integration and unit test suites, run in CI under gcc and clang, including AddressSanitizer and UBSan builds.
+
+ForgeShell isn't a Bash clone. It's a small, readable implementation that shows how Linux actually runs processes, shares the terminal, delivers signals and accounts for resources.
+
+## ⚡ Try it in 60 seconds
+
+```bash
+git clone https://github.com/JeyaVardhan-L/ForgeShell.git
+cd ForgeShell
+make            # builds bin/forge plus the demo workloads
+./bin/forge
+```
+
+Then, inside ForgeShell:
+
+```text
+forge> printf "cherry\napple\nbanana\n" | sort | head -n 2
+forge> ./bin/leak 200 60 &          # allocates 200 MB and holds it for 60s, prints [1] <PID>
+forge> jobs
+forge> monitor <PID>                # live CPU % and resident memory; Ctrl+C to stop
+forge> inspect <PID>                # full /proc report for the process
+forge> ./bin/spin 30 1              # burns CPU for 30s: press Ctrl+Z, then try `jobs`, `bg`, `fg`
+forge> exit
+```
+
+Requirements: Linux, GCC or Clang, GNU Make, and Python 3 (for the tests only).
 
 ---
 

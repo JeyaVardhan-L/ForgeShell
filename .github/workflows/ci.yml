@@ -1,0 +1,31 @@
+name: CI
+
+on:
+  push:
+    branches: [main, "feat/**"]
+  pull_request:
+
+jobs:
+  build-and-test:
+    name: ${{ matrix.compiler }} / ${{ matrix.mode }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        compiler: [gcc, clang]
+        mode: [release, asan]
+    env:
+      CC: ${{ matrix.compiler }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build (release)
+        if: matrix.mode == 'release'
+        run: make
+
+      - name: Build (AddressSanitizer + UBSan)
+        if: matrix.mode == 'asan'
+        run: make asan
+
+      - name: Run test suite
+        run: python3 tests/test_runner.py
