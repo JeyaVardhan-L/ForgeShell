@@ -185,7 +185,7 @@ forge> ps | head -n 15
 
 ## 6. Running Automated Tests & Sanitizers
 
-Run the comprehensive test suite (24 test suites covering process execution, quoting, redirection, pipelines, job control, and `/proc` metrics):
+Run the comprehensive test suite (26 checks covering process execution, quoting, redirection, pipelines, job control, and `/proc` metrics):
 
 ```bash
 # Run release test suite

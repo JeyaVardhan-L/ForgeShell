@@ -16,7 +16,7 @@ bin/
 .idea/
 
 # Test outputs
-tests/__pycache__/
+__pycache__/
 *.pyc
 tests/temp/
 test_output.txt
