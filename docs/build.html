@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Build, tests and CI · ForgeShell, explained</title>
+<meta name="description" content="A field guide to ForgeShell, a Unix shell written in C: processes, file descriptors, pipes, signals, job control and /proc, with interactive figures.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,500;0,8..60,600;0,8..60,700;1,8..60,400;1,8..60,500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="index.html">ForgeShell <span>/ field guide</span></a>
+  <nav class="nav">
+    <a href="index.html" aria-current="page">Guide</a>
+    <a href="source.html">Source</a>
+    <a href="questions.html">Questions</a>
+    <a href="https://github.com/JeyaVardhan-L/ForgeShell">GitHub</a>
+  </nav>
+</header>
+
+<main class="page">
+
+<div class="divider">10 &middot; Build and tests</div>
+<section class="chapter" id="build">
+  <header class="chapter-head">
+    <span class="num">CHAPTER 10</span>
+    <h2>Build, tests and CI</h2>
+    <p class="lede">Two levels of tests, four build variants, and a check that keeps this guide in step with the code.</p>
+  </header>
+  <div class="prose">
+    <p><strong>The build.</strong> <code>make</code> compiles every file in <code>src/</code> with <code>-Wall -Wextra -Wpedantic -std=c11 -O2</code>. The compiler also writes a dependency file for each source (<code>-MMD -MP</code>), so editing a header rebuilds every file that includes it. <code>make debug</code> builds without optimization and with full debug info. <code>make asan</code> adds AddressSanitizer and UndefinedBehaviorSanitizer, which catch out-of-bounds access, use-after-free, leaks and undefined behaviour while the tests run. <a class="srclink" href="source.html#Makefile">Makefile</a></p>
+    <p><strong>Unit tests</strong> (<code>tests/test_parser.c</code>) link the parser on its own and check its output structures directly with <code>assert</code>. <strong>Integration tests</strong> (<code>tests/test_runner.py</code>) start the real <code>bin/forge</code>, pipe a script into it, and check output, exit codes and files: 26 tests across execution, quoting, redirection, pipes, builtins, jobs and <code>/proc</code>.</p>
+    <p>Because the integration tests feed the shell through a pipe, it runs non-interactively: no terminal, so no terminal hand-off and no Ctrl+Z. Those paths are exercised by the demo recorder instead, which drives the shell through a real pseudo-terminal. Turning that into automated tests would be the next step.</p>
+    <p><strong>CI</strong> runs on every push: gcc and clang, each in a release build and a sanitizer build, all running the full suite. A separate job rebuilds this site's annotated source data and fails if it's out of date. The notes are tied to the code by text anchors, so if a function changes and its note no longer matches, CI goes red. <a class="srclink" href="source.html#.github/workflows/ci.yml">ci.yml</a></p>
+  </div>
+
+  <div class="qa">
+    <div class="row"><span class="lab">IN:</span><span class="q">How did you test a shell?</span></div>
+    <div class="row"><span class="lab">OUT:</span><div class="a">
+      <p>At two levels. Unit tests check the parser's data structures directly in C. Integration tests run the real binary with scripted input and check stdout, stderr, exit codes and the files it creates. That covers things like 127 for a missing command, 139 for a segfault, 30,000 lines through a pipeline without deadlock, and no leaked descriptors, checked through <code>/proc/self/fd</code>. CI runs everything under gcc and clang, with and without AddressSanitizer and UBSan.</p>
+    </div></div>
+  </div>
+</section>
+
+<nav class="pager measure"><a href="proc.html">&larr; 09 &middot; Reading the kernel: /proc</a><a href="gaps.html">11 &middot; Bugs found, gaps left &rarr;</a></nav>
+
+<footer class="footer">
+  <span>ForgeShell &middot; MIT licence</span>
+  <span><a href="source.html">Source, annotated</a> &middot; <a href="questions.html">Questions</a> &middot; <a href="https://github.com/JeyaVardhan-L/ForgeShell">GitHub</a></span>
+</footer>
+
+</main>
+
+<script src="assets/site.js"></script>
+<script src="assets/figures.js"></script>
+</body>
+</html>

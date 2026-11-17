@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Bugs found, gaps left · ForgeShell, explained</title>
+<meta name="description" content="A field guide to ForgeShell, a Unix shell written in C: processes, file descriptors, pipes, signals, job control and /proc, with interactive figures.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,500;0,8..60,600;0,8..60,700;1,8..60,400;1,8..60,500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="index.html">ForgeShell <span>/ field guide</span></a>
+  <nav class="nav">
+    <a href="index.html" aria-current="page">Guide</a>
+    <a href="source.html">Source</a>
+    <a href="questions.html">Questions</a>
+    <a href="https://github.com/JeyaVardhan-L/ForgeShell">GitHub</a>
+  </nav>
+</header>
+
+<main class="page">
+
+<div class="divider">11 &middot; Bugs and gaps</div>
+<section class="chapter" id="gaps">
+  <header class="chapter-head">
+    <span class="num">CHAPTER 11</span>
+    <h2>Bugs found, gaps left</h2>
+    <p class="lede">What broke while making this guide, how each fix works, and what still behaves differently from Bash.</p>
+  </header>
+  <div class="prose">
+    <p>Recording the demo and writing these notes meant running the shell in situations the test suite didn't cover: as a session leader, with a real terminal, and with odd input. Six bugs turned up. Each one is fixed, and the ones that can be tested without a terminal now have tests.</p>
+
+    <ul class="ledger">
+      <li><span class="k fixed">fixed</span><div><p><strong>Startup error as a session leader.</strong> Started directly by a terminal emulator, the shell printed <code>setpgid: Operation not permitted</code>. A session leader already leads its group, and POSIX forbids <code>setpgid</code> on it. Now it only calls <code>setpgid</code> when it isn't already the group leader.</p></div></li>
+      <li><span class="k fixed">fixed</span><div><p><strong>Job numbers skipped.</strong> Every foreground command used up a job number, so the first background job after <code>ls</code> was <code>[2]</code>. IDs are now "highest in use + 1", as in Bash. Test: "Job numbering starts at [1]".</p></div></li>
+      <li><span class="k fixed">fixed</span><div><p><strong>"Stopped" printed twice.</strong> After Ctrl+Z, <code>wait_for_job</code> printed the notice and the before-prompt check printed it again. The job is now marked as already reported.</p></div></li>
+      <li><span class="k fixed">fixed</span><div><p><strong>Demo program optimized away.</strong> <code>leak</code>'s allocation was deleted by <code>-O2</code>, since it was never read. Now it writes through a <code>volatile</code> pointer.</p></div></li>
+      <li><span class="k fixed">fixed</span><div><p><strong>Empty pipeline stage crashed.</strong> <code>ls | &gt; out.txt</code> parsed, and the child then called <code>execvp(NULL)</code> and segfaulted. Every stage must now have a command. Test in <code>test_parser.c</code>.</p></div></li>
+      <li><span class="k fixed">fixed</span><div><p><strong>Pipeline exit status.</strong> The status came from whichever process was reaped last, so <code>sleep 1 | false</code> reported success. It now comes from the last command, as in Bash. Test: "Pipeline exit status (last command)".</p></div></li>
+    </ul>
+
+    <h3>Known differences and rough edges</h3>
+    <ul class="ledger">
+      <li><span class="k gap">lexer</span><div><p><code>echo a2&gt;f</code> is read as <code>echo a</code> plus <code>2&gt; f</code>, because <code>2&gt;</code> is treated as an operator anywhere in a word. The fix is to recognise it only at the start of a word.</p></div></li>
+      <li><span class="k gap">syntax</span><div><p>No <code>;</code>, <code>&amp;&amp;</code>, <code>||</code>, <code>$VAR</code>, <code>$?</code>, globbing (<code>*.c</code>), <code>2&gt;&amp;1</code>, <code>2&gt;&gt;</code>, heredocs, or <code>cd ~/dir</code>. A line holding only a redirect (<code>&gt; f</code>) does nothing, where Bash would create the file.</p></div></li>
+      <li><span class="k gap">jobs</span><div><p><code>exit</code> doesn't warn about stopped jobs. Each job has a slot for its own terminal settings (<code>tmodes</code>), but it's never used, so a full-screen program brought back with <code>fg</code> doesn't get its terminal mode restored.</p></div></li>
+      <li><span class="k gap">errors</span><div><p>If <code>pipe()</code> fails halfway through a pipeline, children already started are left running and stay in the job table.</p></div></li>
+      <li><span class="k gap">signals</span><div><p>The <code>SIGCHLD</code> handler sets a flag nothing reads. That's harmless, because reaping happens before each prompt, but a finished background job is only reported when you next press Enter.</p></div></li>
+      <li><span class="k gap">tests</span><div><p>"Monitor termination handling" never actually runs <code>monitor</code>. Interactive job control (Ctrl+Z, terminal hand-off) has no automated tests. Both would need a pseudo-terminal harness like the demo recorder.</p></div></li>
+      <li><span class="k gap">report</span><div><p><code>inspect</code> labels the process state as coming from <code>status</code>, but it's parsed from <code>stat</code>. The value is the same.</p></div></li>
+    </ul>
+
+    <h3>What to build next</h3>
+    <p>In the order I'd tackle them: a pseudo-terminal test harness for interactive job control, <code>$?</code> and <code>$VAR</code> expansion, <code>;</code> <code>&amp;&amp;</code> <code>||</code> (which needs a real grammar, a list of pipelines joined by operators), <code>2&gt;&amp;1</code>, globbing through <code>glob()</code>, and line editing with history, which means putting the terminal into raw mode.</p>
+  </div>
+</section>
+
+<nav class="pager measure"><a href="build.html">&larr; 10 &middot; Build, tests and CI</a><a href="index.html">Contents &rarr;</a></nav>
+
+<footer class="footer">
+  <span>ForgeShell &middot; MIT licence</span>
+  <span><a href="source.html">Source, annotated</a> &middot; <a href="questions.html">Questions</a> &middot; <a href="https://github.com/JeyaVardhan-L/ForgeShell">GitHub</a></span>
+</footer>
+
+</main>
+
+<script src="assets/site.js"></script>
+<script src="assets/figures.js"></script>
+</body>
+</html>

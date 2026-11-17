@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Pipes · ForgeShell, explained</title>
+<meta name="description" content="A field guide to ForgeShell, a Unix shell written in C: processes, file descriptors, pipes, signals, job control and /proc, with interactive figures.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,500;0,8..60,600;0,8..60,700;1,8..60,400;1,8..60,500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="index.html">ForgeShell <span>/ field guide</span></a>
+  <nav class="nav">
+    <a href="index.html" aria-current="page">Guide</a>
+    <a href="source.html">Source</a>
+    <a href="questions.html">Questions</a>
+    <a href="https://github.com/JeyaVardhan-L/ForgeShell">GitHub</a>
+  </nav>
+</header>
+
+<main class="page">
+
+<div class="divider">05 &middot; Pipes</div>
+<section class="chapter" id="pipes">
+  <header class="chapter-head">
+    <span class="num">CHAPTER 05</span>
+    <h2>Pipes</h2>
+    <p class="lede">A pipe is a small buffer in the kernel with a write end and a read end. The hard part is closing things.</p>
+  </header>
+  <div class="prose">
+    <p><code>pipe(fds)</code> creates the buffer and returns two descriptors: <code>fds[1]</code> to write, <code>fds[0]</code> to read. On Linux the buffer holds 64 KB by default. A writer blocks when it's full and a reader blocks when it's empty, so the stages of a pipeline run <em>at the same time</em> and pace each other. That's how <code>yes | head -n 30000 | wc -l</code> can push unlimited data through a fixed buffer.</p>
+    <p>Two rules follow:</p>
+    <ul>
+      <li>A reader gets <strong>end-of-file</strong> only when <em>every</em> write end of the pipe is closed, in every process that has one. That includes copies inherited through <code>fork</code>.</li>
+      <li>A writer whose readers are all gone gets <strong><code>SIGPIPE</code></strong>, which kills it by default. That's how <code>yes</code> stops once <code>head</code> exits.</li>
+    </ul>
+    <p>ForgeShell builds a pipeline with one loop. For each command except the last, it creates a pipe <em>before</em> forking so the child inherits it. The child wires the previous pipe's read end to stdin and the new pipe's write end to stdout, and closes the rest. The parent closes what it no longer needs and keeps only the newest read end, in <code>prev_pipe_read</code>, for the next command. When the loop ends, the shell holds no pipe descriptors at all. <a class="srclink" href="source.html#src/executor.c@for (int i = 0; i < num_cmds; i++, cmd = cmd->next) {">the loop</a></p>
+  </div>
+
+  <figure class="fig" data-fig="pipes">
+    <span class="fig-label">FIG_006</span>
+    <div class="fig-body"></div>
+    <figcaption><b>Who holds which end</b> Step through the loop. The table shows which process holds each pipe end. Turn on the bug and watch a reader end up waiting forever for an end-of-file that never comes.</figcaption>
+  </figure>
+
+  <div class="prose">
+    <p>The test suite checks for leaks directly. After running several pipelines it runs <code>ls -1 /proc/self/fd | wc -l</code>, counting the descriptors a child inherited from the shell. A leaked pipe end would show up in that count. <a class="srclink" href="source.html#tests/test_runner.py@def test_descriptor_closure">test</a></p>
+  </div>
+
+  <div class="qa">
+    <div class="row"><span class="lab">IN:</span><span class="q">Why would a pipeline hang if you forget to close a descriptor?</span></div>
+    <div class="row"><span class="lab">OUT:</span><div class="a">
+      <p>A reader only sees end-of-file when every copy of the pipe's write end is closed. If the shell, or a later child that inherited it, still holds a write end, the kernel assumes more data might come, and the reader blocks forever. The shell must close its copies after forking, and each child must close the ends it doesn't use.</p>
+    </div></div>
+  </div>
+</section>
+
+<nav class="pager measure"><a href="fds.html">&larr; 04 &middot; File descriptors and redirection</a><a href="builtins.html">06 &middot; Builtins &rarr;</a></nav>
+
+<footer class="footer">
+  <span>ForgeShell &middot; MIT licence</span>
+  <span><a href="source.html">Source, annotated</a> &middot; <a href="questions.html">Questions</a> &middot; <a href="https://github.com/JeyaVardhan-L/ForgeShell">GitHub</a></span>
+</footer>
+
+</main>
+
+<script src="assets/site.js"></script>
+<script src="assets/figures.js"></script>
+</body>
+</html>

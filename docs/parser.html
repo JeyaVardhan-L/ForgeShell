@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>From text to structure · ForgeShell, explained</title>
+<meta name="description" content="A field guide to ForgeShell, a Unix shell written in C: processes, file descriptors, pipes, signals, job control and /proc, with interactive figures.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,500;0,8..60,600;0,8..60,700;1,8..60,400;1,8..60,500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="index.html">ForgeShell <span>/ field guide</span></a>
+  <nav class="nav">
+    <a href="index.html" aria-current="page">Guide</a>
+    <a href="source.html">Source</a>
+    <a href="questions.html">Questions</a>
+    <a href="https://github.com/JeyaVardhan-L/ForgeShell">GitHub</a>
+  </nav>
+</header>
+
+<main class="page">
+
+<div class="divider">02 &middot; From text to structure</div>
+<section class="chapter" id="parser">
+  <header class="chapter-head">
+    <span class="num">CHAPTER 02</span>
+    <h2>From text to structure</h2>
+    <p class="lede">Before anything can run, a line like <code>sort &lt; in.txt | head -n 2 &gt; out.txt</code> has to become something a program can act on.</p>
+  </header>
+  <div class="prose">
+    <p>The parser works in two passes, the way a compiler does. The <strong>lexer</strong> reads characters and produces <em>tokens</em>: words, plus the operators <code>|</code>, <code>&lt;</code>, <code>&gt;</code>, <code>&gt;&gt;</code>, <code>2&gt;</code> and <code>&amp;</code>. The <strong>parser</strong> then reads tokens and builds structures. Keeping the two apart means quoting rules live in exactly one place.</p>
+    <p>Why not split on spaces? Because of quotes. <code>echo "a | b"</code> must pass one argument, <code>a | b</code>, to echo, and must not create a pipe. The lexer handles three quoting styles:</p>
+    <ul>
+      <li><strong>Single quotes</strong> keep everything literally until the next <code>'</code>. No escapes at all.</li>
+      <li><strong>Double quotes</strong> keep spaces and operators, and let <code>\"</code> and <code>\\</code> through as escapes. Any other backslash is kept, which is why <code>printf "a\nb"</code> works.</li>
+      <li><strong>A backslash outside quotes</strong> makes the next character ordinary, so <code>a\ b</code> is one word.</li>
+    </ul>
+    <p>The output is a <code>JobPipeline</code>: a linked list of <code>Command</code> structures, one per stage, plus a flag for a trailing <code>&amp;</code>. Each command has a <code>NULL</code>-terminated <code>argv</code> array, which is exactly the shape <code>execvp()</code> wants, and up to three redirect file names. <a class="srclink" href="source.html#include/parser.h">parser.h</a></p>
+  </div>
+
+  <figure class="fig" data-fig="parser">
+    <span class="fig-label">FIG_002</span>
+    <div class="fig-body"></div>
+    <figcaption><b>Parser playground</b> This is the shell's lexer and parser ported line for line to JavaScript, error messages included. Type anything, or pick an example. Try the ones that fail.</figcaption>
+  </figure>
+
+  <div class="prose">
+    <p>Two details are worth knowing. Redirect targets aren't arguments: in <code>sort &gt; out.txt -r</code>, <code>sort</code> gets <code>-r</code> and its output goes to the file. And a few corners behave differently from Bash. <code>echo a2&gt;f</code> splits into <code>a</code> and a <code>2&gt;</code> redirect, because the lexer treats <code>2&gt;</code> as an operator even in the middle of a word. Chapter 11 lists these.</p>
+    <p>Every error path frees everything allocated so far: the token list, the half-built pipeline, and every string inside both. The parser tests run under AddressSanitizer in CI, which would catch a leak on any of those paths. <a class="srclink" href="source.html#src/parser.c@JobPipeline *parse_pipeline">parse_pipeline</a></p>
+  </div>
+
+  <div class="qa">
+    <div class="row"><span class="lab">IN:</span><span class="q">Why separate the lexer from the parser?</span></div>
+    <div class="row"><span class="lab">OUT:</span><div class="a">
+      <p>They solve different problems. The lexer deals with characters: quotes, escapes, where one word ends. The parser deals with grammar: a redirect must be followed by a file name, a pipe can't come first. Splitting them keeps both simple. The parser never sees a quote, and the lexer never needs to know what a pipeline is. It's the same reason compilers are built that way.</p>
+    </div></div>
+  </div>
+</section>
+
+<nav class="pager measure"><a href="loop.html">&larr; 01 &middot; The loop</a><a href="process.html">03 &middot; Making a process &rarr;</a></nav>
+
+<footer class="footer">
+  <span>ForgeShell &middot; MIT licence</span>
+  <span><a href="source.html">Source, annotated</a> &middot; <a href="questions.html">Questions</a> &middot; <a href="https://github.com/JeyaVardhan-L/ForgeShell">GitHub</a></span>
+</footer>
+
+</main>
+
+<script src="assets/site.js"></script>
+<script src="assets/figures.js"></script>
+</body>
+</html>

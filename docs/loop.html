@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>The loop · ForgeShell, explained</title>
+<meta name="description" content="A field guide to ForgeShell, a Unix shell written in C: processes, file descriptors, pipes, signals, job control and /proc, with interactive figures.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,500;0,8..60,600;0,8..60,700;1,8..60,400;1,8..60,500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="index.html">ForgeShell <span>/ field guide</span></a>
+  <nav class="nav">
+    <a href="index.html" aria-current="page">Guide</a>
+    <a href="source.html">Source</a>
+    <a href="questions.html">Questions</a>
+    <a href="https://github.com/JeyaVardhan-L/ForgeShell">GitHub</a>
+  </nav>
+</header>
+
+<main class="page">
+
+<div class="divider">01 &middot; The loop</div>
+<section class="chapter" id="loop">
+  <header class="chapter-head">
+    <span class="num">CHAPTER 01</span>
+    <h2>The loop</h2>
+    <p class="lede">A shell is an ordinary program running one loop: read a line, work out what it means, run it, repeat.</p>
+  </header>
+  <div class="prose">
+    <p>There is nothing special about a shell. When you run <code>./bin/forge</code>, the kernel starts it like any other program: it gets a process ID, some memory, and three open files (keyboard input, screen output, and error output). Everything it does after that, it does by asking the kernel through <strong>system calls</strong>, the small fixed set of functions such as <code>fork</code>, <code>open</code> and <code>read</code> that a program uses to get the kernel to act for it.</p>
+    <p>ForgeShell's <code>main()</code> is short enough to hold in your head. Before each prompt it checks on background jobs. Then it prints <code>forge&gt; </code>, blocks until you press Enter, turns the line into a structure, runs that structure, frees it, and goes round again. When input ends (Ctrl+D, or the end of a piped script) it exits with the status of the last command. <a class="srclink" href="source.html#src/main.c@while (1) {">main.c</a></p>
+  </div>
+
+  <figure class="fig" data-fig="loop">
+    <span class="fig-label">FIG_001</span>
+    <div class="fig-body"></div>
+    <figcaption><b>The loop</b> Hover or tap a step to see what it does and where it lives. The dot shows one trip around the loop.</figcaption>
+  </figure>
+
+  <div class="prose">
+    <h3>Where things live</h3>
+    <p>The code is split by job, and each file maps to one chapter of this guide:</p>
+    <ul>
+      <li><code>main.c</code>: the loop above.</li>
+      <li><code>parser.c</code>: text to <code>Command</code> structures (chapter 02).</li>
+      <li><code>executor.c</code>: structures to processes, with pipes and redirects (chapters 03 to 05).</li>
+      <li><code>builtins.c</code>: commands the shell runs itself (chapter 06).</li>
+      <li><code>signals.c</code> and <code>jobs.c</code>: Ctrl+C, Ctrl+Z, <code>fg</code>, <code>bg</code> (chapters 07 and 08).</li>
+      <li><code>proc.c</code>: <code>inspect</code>, <code>monitor</code> and <code>ps</code>, which read the kernel's <code>/proc</code> files (chapter 09).</li>
+    </ul>
+    <p>Each <code>.c</code> file has a matching header in <code>include/</code> that declares what other files may use. Everything else is <code>static</code>, meaning private to its file.</p>
+  </div>
+
+  <div class="qa">
+    <div class="row"><span class="lab">IN:</span><span class="q">What happens when you type <code>ls</code> and press Enter?</span></div>
+    <div class="row"><span class="lab">OUT:</span><div class="a">
+      <p>The terminal driver hands the line to the shell, which is blocked in <code>getline()</code>. The parser turns it into one command with <code>argv = ["ls", NULL]</code>. It isn't a builtin, so the shell calls <code>fork()</code>. The child puts itself in a new process group, takes the terminal, resets its signals and calls <code>execvp("ls", argv)</code>, which searches <code>PATH</code> and replaces the child's program with <code>/usr/bin/ls</code>.</p>
+      <p>The shell waits with <code>waitpid()</code>. When <code>ls</code> exits, the shell collects its status, takes the terminal back and prints the next prompt.</p>
+    </div></div>
+  </div>
+</section>
+
+<nav class="pager measure"><a href="index.html">&larr; Contents</a><a href="parser.html">02 &middot; From text to structure &rarr;</a></nav>
+
+<footer class="footer">
+  <span>ForgeShell &middot; MIT licence</span>
+  <span><a href="source.html">Source, annotated</a> &middot; <a href="questions.html">Questions</a> &middot; <a href="https://github.com/JeyaVardhan-L/ForgeShell">GitHub</a></span>
+</footer>
+
+</main>
+
+<script src="assets/site.js"></script>
+<script src="assets/figures.js"></script>
+</body>
+</html>

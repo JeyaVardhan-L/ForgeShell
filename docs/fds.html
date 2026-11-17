@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>File descriptors and redirection · ForgeShell, explained</title>
+<meta name="description" content="A field guide to ForgeShell, a Unix shell written in C: processes, file descriptors, pipes, signals, job control and /proc, with interactive figures.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,500;0,8..60,600;0,8..60,700;1,8..60,400;1,8..60,500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="index.html">ForgeShell <span>/ field guide</span></a>
+  <nav class="nav">
+    <a href="index.html" aria-current="page">Guide</a>
+    <a href="source.html">Source</a>
+    <a href="questions.html">Questions</a>
+    <a href="https://github.com/JeyaVardhan-L/ForgeShell">GitHub</a>
+  </nav>
+</header>
+
+<main class="page">
+
+<div class="divider">04 &middot; File descriptors</div>
+<section class="chapter" id="fds">
+  <header class="chapter-head">
+    <span class="num">CHAPTER 04</span>
+    <h2>File descriptors and redirection</h2>
+    <p class="lede">A program never writes to "the screen". It writes to file descriptor 1, and the shell decides what 1 is.</p>
+  </header>
+  <div class="prose">
+    <p>Each process has a small table owned by the kernel. A <strong>file descriptor</strong> is just an index into it: 0, 1, 2, 3 and so on. Each entry points to an <em>open file description</em> in the kernel, which records which file, the current position and the access mode. By convention 0 is standard input, 1 standard output and 2 standard error. The table is copied by <code>fork</code> and kept by <code>exec</code>, which is why redirection works at all.</p>
+    <p>Three calls do all the work:</p>
+    <ul>
+      <li><code>open(path, flags, mode)</code> returns the <em>lowest free</em> descriptor pointing at the file.</li>
+      <li><code>dup2(old, new)</code> makes <code>new</code> point where <code>old</code> points. If <code>new</code> was open, it's closed first, in one atomic step.</li>
+      <li><code>close(fd)</code> removes an entry.</li>
+    </ul>
+    <p>So <code>ls &gt; out.txt</code> is: in the child, <code>open("out.txt", O_WRONLY|O_CREAT|O_TRUNC, 0644)</code> gives fd 3, <code>dup2(3, 1)</code> points stdout at the file, <code>close(3)</code>, then <code>exec ls</code>. <code>ls</code> writes to fd 1 as always and never knows. <code>&gt;&gt;</code> swaps <code>O_TRUNC</code> for <code>O_APPEND</code>, which makes every write go to the current end of the file. <a class="srclink" href="source.html#src/executor.c@int apply_redirections">apply_redirections</a></p>
+  </div>
+
+  <figure class="fig" data-fig="fds">
+    <span class="fig-label">FIG_005</span>
+    <div class="fig-body"></div>
+    <figcaption><b>Descriptor table</b> Choose a redirect and step through the child's table between <code>fork</code> and <code>exec</code>.</figcaption>
+  </figure>
+
+  <div class="prose">
+    <p>A builtin like <code>pwd &gt; where.txt</code> raises a problem: it runs <em>inside the shell</em>, so redirecting its fd 1 would redirect the shell's own output. The fix is to save the real descriptors first with <code>dup(1)</code>, which gives a spare descriptor pointing at the terminal. Then redirect, run the builtin, and <code>dup2</code> the saved copy back. <a class="srclink" href="source.html#src/executor.c@static int execute_single_builtin">execute_single_builtin</a></p>
+  </div>
+
+  <div class="qa">
+    <div class="row"><span class="lab">IN:</span><span class="q">How does output redirection actually work?</span></div>
+    <div class="row"><span class="lab">OUT:</span><div class="a">
+      <p>In the child, after <code>fork</code> and before <code>exec</code>: open the file, which gets the lowest free descriptor, say 3. Then <code>dup2(3, 1)</code> so descriptor 1 points at the file, and close 3. The descriptor table survives <code>exec</code>, so the new program writes to fd 1 as usual and the data lands in the file. The program itself doesn't do anything special.</p>
+    </div></div>
+  </div>
+</section>
+
+<nav class="pager measure"><a href="process.html">&larr; 03 &middot; Making a process</a><a href="pipes.html">05 &middot; Pipes &rarr;</a></nav>
+
+<footer class="footer">
+  <span>ForgeShell &middot; MIT licence</span>
+  <span><a href="source.html">Source, annotated</a> &middot; <a href="questions.html">Questions</a> &middot; <a href="https://github.com/JeyaVardhan-L/ForgeShell">GitHub</a></span>
+</footer>
+
+</main>
+
+<script src="assets/site.js"></script>
+<script src="assets/figures.js"></script>
+</body>
+</html>

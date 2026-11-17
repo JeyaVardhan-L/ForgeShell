@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Reading the kernel: /proc · ForgeShell, explained</title>
+<meta name="description" content="A field guide to ForgeShell, a Unix shell written in C: processes, file descriptors, pipes, signals, job control and /proc, with interactive figures.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,500;0,8..60,600;0,8..60,700;1,8..60,400;1,8..60,500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="index.html">ForgeShell <span>/ field guide</span></a>
+  <nav class="nav">
+    <a href="index.html" aria-current="page">Guide</a>
+    <a href="source.html">Source</a>
+    <a href="questions.html">Questions</a>
+    <a href="https://github.com/JeyaVardhan-L/ForgeShell">GitHub</a>
+  </nav>
+</header>
+
+<main class="page">
+
+<div class="divider">09 &middot; /proc</div>
+<section class="chapter" id="proc">
+  <header class="chapter-head">
+    <span class="num">CHAPTER 09</span>
+    <h2>Reading the kernel: /proc</h2>
+    <p class="lede">Linux exposes every process as a folder of text files. <code>inspect</code>, <code>monitor</code> and <code>ps</code> just read them.</p>
+  </header>
+  <div class="prose">
+    <p><code>/proc</code> isn't stored on any disk. It's a <em>virtual filesystem</em>: when you read <code>/proc/1234/status</code>, the kernel builds the text on the spot from its live process tables. So <code>ps</code> is just "list the folders in <code>/proc</code> whose names are numbers", and every number <code>inspect</code> prints is something you could <code>cat</code> yourself. The report names the source next to each value for exactly that reason.</p>
+    <p>ForgeShell reads six things per process: <code>stat</code> (one line, about 52 fields), <code>status</code> (readable <code>Key: value</code> lines), <code>cmdline</code>, the <code>exe</code> and <code>cwd</code> links, and the entries in <code>fd/</code>. <a class="srclink" href="source.html#src/proc.c@bool proc_get_info">proc_get_info</a></p>
+    <h3>The parenthesis trap</h3>
+    <p>Field 2 of <code>stat</code> is the program name in parentheses, and the name can contain spaces or a <code>)</code>. Split the line on spaces and every later field shifts. The safe way, used here and by the real <code>ps</code>, is to take the text between the <em>first</em> <code>(</code> and the <em>last</em> <code>)</code>, then parse the rest.</p>
+  </div>
+
+  <figure class="fig" data-fig="stat">
+    <span class="fig-label">FIG_011</span>
+    <div class="fig-body"></div>
+    <figcaption><b>/proc/&lt;pid&gt;/stat</b> Click any field. Blue fields are the ones ForgeShell's <code>sscanf</code> reads, and grey ones are skipped. Rename the program to see the trap.</figcaption>
+  </figure>
+
+  <div class="prose">
+    <h3>CPU percentage</h3>
+    <p><code>/proc</code> only reports <em>total</em> CPU time since the process started, in clock ticks (<code>utime</code> for its own code, <code>stime</code> for kernel work on its behalf). There are usually 100 ticks per second (<code>sysconf(_SC_CLK_TCK)</code>). Usage <em>right now</em> needs two samples: the change in ticks, divided by ticks per second, divided by the seconds between samples. <code>monitor</code> does exactly that each interval, timing the interval with <code>CLOCK_MONOTONIC</code> so a clock change can't distort it. <a class="srclink" href="source.html#src/proc.c@double elapsed_sec">the formula</a></p>
+  </div>
+
+  <figure class="fig" data-fig="cpu">
+    <span class="fig-label">FIG_012</span>
+    <div class="fig-body"></div>
+    <figcaption><b>Two samples</b> Move the sliders. A process with several busy threads can go past 100%, one core's worth per thread.</figcaption>
+  </figure>
+
+  <div class="prose">
+    <h3>VmSize and VmRSS</h3>
+    <p><strong>VmSize</strong> is all the address space a process has reserved. <strong>VmRSS</strong> (resident set size) is how much of it is actually in RAM. They differ because Linux allocates lazily: <code>malloc</code> of 300 MB only reserves addresses, and real memory is attached one 4 KB page at a time, on the first write to each page (a <em>page fault</em>). The <code>leak</code> demo program writes one byte per page to make all of it resident.</p>
+    <p>That demo program also contained a bug, found while recording the demo on the front page. It used to <code>malloc</code>, <code>memset</code> and <code>free</code> a buffer it never read. Under <code>-O2</code> the compiler is allowed to delete all three, because nothing can observe them, so <code>inspect</code> showed 2 MB instead of 300. Making the pointer <code>volatile</code> forces the writes to happen. <a class="srclink" href="source.html#examples/leak.c@volatile char *buf">leak.c</a></p>
+  </div>
+
+  <figure class="fig" data-fig="memory">
+    <span class="fig-label">FIG_013</span>
+    <div class="fig-body"></div>
+    <figcaption><b>Reserved versus resident</b> Each square is a group of pages. Allocate, then touch. The last switch replays the compiler bug.</figcaption>
+  </figure>
+
+  <div class="qa">
+    <div class="row"><span class="lab">IN:</span><span class="q">What's the difference between VmSize and VmRSS?</span></div>
+    <div class="row"><span class="lab">OUT:</span><div class="a">
+      <p>VmSize is the virtual address space the process has reserved. VmRSS is the part actually backed by physical RAM right now. Linux only attaches a physical page when the process first touches it, so a big <code>malloc</code> raises VmSize straight away but VmRSS only as pages are written. RSS can also go down when pages are swapped out.</p>
+    </div></div>
+  </div>
+</section>
+
+<nav class="pager measure"><a href="jobs.html">&larr; 08 &middot; Job control</a><a href="build.html">10 &middot; Build, tests and CI &rarr;</a></nav>
+
+<footer class="footer">
+  <span>ForgeShell &middot; MIT licence</span>
+  <span><a href="source.html">Source, annotated</a> &middot; <a href="questions.html">Questions</a> &middot; <a href="https://github.com/JeyaVardhan-L/ForgeShell">GitHub</a></span>
+</footer>
+
+</main>
+
+<script src="assets/site.js"></script>
+<script src="assets/figures.js"></script>
+</body>
+</html>

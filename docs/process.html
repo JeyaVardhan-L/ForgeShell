@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Making a process · ForgeShell, explained</title>
+<meta name="description" content="A field guide to ForgeShell, a Unix shell written in C: processes, file descriptors, pipes, signals, job control and /proc, with interactive figures.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,500;0,8..60,600;0,8..60,700;1,8..60,400;1,8..60,500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="index.html">ForgeShell <span>/ field guide</span></a>
+  <nav class="nav">
+    <a href="index.html" aria-current="page">Guide</a>
+    <a href="source.html">Source</a>
+    <a href="questions.html">Questions</a>
+    <a href="https://github.com/JeyaVardhan-L/ForgeShell">GitHub</a>
+  </nav>
+</header>
+
+<main class="page">
+
+<div class="divider">03 &middot; Making a process</div>
+<section class="chapter" id="process">
+  <header class="chapter-head">
+    <span class="num">CHAPTER 03</span>
+    <h2>Making a process</h2>
+    <p class="lede">Unix starts a program in two steps: copy yourself, then let the copy turn into something else.</p>
+  </header>
+  <div class="prose">
+    <p><strong><code>fork()</code></strong> makes a near-exact copy of the calling process: same code, same variables, same open files. It returns twice, once in each process. The parent gets the child's process ID, and the child gets <code>0</code>. The copy is cheap because of <em>copy-on-write</em>: the kernel shares the memory pages and only copies a page when one side writes to it.</p>
+    <p><strong><code>execvp()</code></strong> replaces the calling process's program with a new one, found by searching <code>PATH</code>. The process ID stays the same, open files stay open, and ignored signals stay ignored. Everything else is gone: code, heap, stack. If <code>exec</code> succeeds, it never returns.</p>
+    <p><strong><code>waitpid()</code></strong> lets the parent block until a child changes state, then collect its exit status. Until the parent does that, a finished child stays in the process table as a <strong>zombie</strong>: no memory, no code, just a PID and a status waiting to be read.</p>
+    <p>The gap between <code>fork</code> and <code>exec</code> is the whole point. In that gap the child is still running <em>shell code</em>, so it can set itself up: join a process group, take the terminal, reset signals, rewire its file descriptors. Then it becomes <code>sort</code>, and <code>sort</code> starts life already redirected without knowing it. <a class="srclink" href="source.html#src/executor.c@if (pid == 0) {">child side</a></p>
+  </div>
+
+  <figure class="fig" data-fig="forkexec">
+    <span class="fig-label">FIG_003</span>
+    <div class="fig-body"></div>
+    <figcaption><b>fork, exec, wait</b> Step through <code>sort &lt; names.txt</code>. Highlighted fields changed in that step.</figcaption>
+  </figure>
+
+  <div class="prose">
+    <h3>Exit statuses</h3>
+    <p>The status <code>waitpid</code> returns is a packed integer, not the plain exit code. The macros <code>WIFEXITED</code>, <code>WEXITSTATUS</code>, <code>WIFSIGNALED</code>, <code>WTERMSIG</code> and <code>WIFSTOPPED</code> unpack it. On Linux the layout is: exit code in bits 8 to 15, terminating signal in bits 0 to 6, core-dump flag in bit 7, and the special value <code>0x7f</code> in the low byte for a stopped process.</p>
+    <p>Shells turn this into one number, which Bash calls <code>$?</code>: the exit code if the process exited, <strong>128 + signal number</strong> if a signal killed it. That's why a segfault shows up as 139 and Ctrl+C as 130. Two more values come from the shell itself: <strong>127</strong> when <code>exec</code> can't find the command, and <strong>126</strong> when it found it but couldn't run it. <a class="srclink" href="source.html#src/jobs.c@if (job_is_completed(job)) {">wait_for_job</a></p>
+  </div>
+
+  <figure class="fig" data-fig="status">
+    <span class="fig-label">FIG_004</span>
+    <div class="fig-body"></div>
+    <figcaption><b>Status word</b> Pick how the child ended and watch the bits, the macros, and what ForgeShell records as the exit status.</figcaption>
+  </figure>
+
+  <div class="qa">
+    <div class="row"><span class="lab">IN:</span><span class="q">Why are fork and exec separate calls?</span></div>
+    <div class="row"><span class="lab">OUT:</span><div class="a">
+      <p>Because the child needs to run some of the shell's code before it becomes the new program. Between the two calls it sets up its process group, terminal, signals and file descriptors using ordinary system calls, and <code>exec</code> keeps all of that. One combined "spawn" call would need a parameter for every possible piece of setup. Splitting it means any setup you can write in C is available for free.</p>
+    </div></div>
+  </div>
+</section>
+
+<nav class="pager measure"><a href="parser.html">&larr; 02 &middot; From text to structure</a><a href="fds.html">04 &middot; File descriptors and redirection &rarr;</a></nav>
+
+<footer class="footer">
+  <span>ForgeShell &middot; MIT licence</span>
+  <span><a href="source.html">Source, annotated</a> &middot; <a href="questions.html">Questions</a> &middot; <a href="https://github.com/JeyaVardhan-L/ForgeShell">GitHub</a></span>
+</footer>
+
+</main>
+
+<script src="assets/site.js"></script>
+<script src="assets/figures.js"></script>
+</body>
+</html>

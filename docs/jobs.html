@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Job control · ForgeShell, explained</title>
+<meta name="description" content="A field guide to ForgeShell, a Unix shell written in C: processes, file descriptors, pipes, signals, job control and /proc, with interactive figures.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,500;0,8..60,600;0,8..60,700;1,8..60,400;1,8..60,500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="index.html">ForgeShell <span>/ field guide</span></a>
+  <nav class="nav">
+    <a href="index.html" aria-current="page">Guide</a>
+    <a href="source.html">Source</a>
+    <a href="questions.html">Questions</a>
+    <a href="https://github.com/JeyaVardhan-L/ForgeShell">GitHub</a>
+  </nav>
+</header>
+
+<main class="page">
+
+<div class="divider">08 &middot; Job control</div>
+<section class="chapter" id="jobs">
+  <header class="chapter-head">
+    <span class="num">CHAPTER 08</span>
+    <h2>Job control</h2>
+    <p class="lede">Ctrl+Z, <code>fg</code> and <code>bg</code> are built on three kernel ideas: sessions, process groups, and a terminal that knows who is in front.</p>
+  </header>
+  <div class="prose">
+    <p>A <strong>process group</strong> is a set of processes that receive signals together, identified by a PGID. Every pipeline is one group, so Ctrl+C stops <em>all</em> of <code>yes | head | wc</code> at once. A <strong>session</strong> is the set of groups that share one controlling terminal. The terminal has exactly one <strong>foreground process group</strong>: only that group may read the keyboard, and Ctrl+C, Ctrl+Z and Ctrl+\ are delivered to it.</p>
+    <p>The shell's job is to move the terminal between groups:</p>
+    <ol>
+      <li>At startup it puts itself in its own group and takes the terminal with <code>tcsetpgrp()</code>.</li>
+      <li>For a foreground job it creates a new group (with <code>setpgid</code>), hands the terminal to it, and waits with <code>waitpid(-pgid, ..., WUNTRACED)</code>. The negative PID means "any process in that group", and <code>WUNTRACED</code> means "also wake me if one stops".</li>
+      <li>When the job finishes or stops, the shell takes the terminal back and restores the terminal settings it saved at startup.</li>
+      <li><code>fg</code> hands the terminal over again and sends <code>SIGCONT</code> to the group. <code>bg</code> just sends <code>SIGCONT</code>.</li>
+    </ol>
+    <p>A background group that tries to read the terminal gets <code>SIGTTIN</code>, which stops it. That's why <code>cat &amp;</code> shows up as Stopped in <code>jobs</code>. <a class="srclink" href="source.html#src/jobs.c@int put_job_in_foreground">put_job_in_foreground</a></p>
+  </div>
+
+  <figure class="fig" data-fig="jobsim">
+    <span class="fig-label">FIG_009</span>
+    <div class="fig-body"></div>
+    <figcaption><b>Who has the terminal</b> A small model of ForgeShell's job control. Start jobs, press the keys, and follow the foreground group and the system calls behind each step.</figcaption>
+  </figure>
+
+  <div class="prose">
+    <h3>The double setpgid</h3>
+    <p>After <code>fork</code>, both the parent and the child call <code>setpgid(child, pgid)</code>. That looks redundant, but it's deliberate. After <code>fork</code> the scheduler can run either process first. If only the child called <code>setpgid</code> and the parent ran first, the parent could call <code>tcsetpgrp(tty, pgid)</code> for a group that doesn't exist yet, and that fails. If only the parent called it, the child might <code>exec</code> before joining the group, and a quick Ctrl+C would miss it. With both calls, whichever runs first creates the group, and the second call is harmless. <a class="srclink" href="source.html#src/executor.c@/* Put child in job's process group */">both calls</a></p>
+  </div>
+
+  <figure class="fig" data-fig="race">
+    <span class="fig-label">FIG_010</span>
+    <div class="fig-body"></div>
+    <figcaption><b>The race</b> Choose who the scheduler runs first, and whether the parent also calls <code>setpgid</code>.</figcaption>
+  </figure>
+
+  <div class="prose">
+    <p>One more subtle ordering: the child calls <code>tcsetpgrp</code> <em>before</em> resetting its signals. Calling <code>tcsetpgrp</code> from a background group raises <code>SIGTTOU</code>, but at that moment the child still has the shell's "ignore <code>SIGTTOU</code>" setting, so the call succeeds. Swap the two steps and the child could stop itself.</p>
+  </div>
+
+  <div class="qa">
+    <div class="row"><span class="lab">IN:</span><span class="q">What is a process group, and why does a shell need them?</span></div>
+    <div class="row"><span class="lab">OUT:</span><div class="a">
+      <p>A process group is a set of processes that receive signals as one unit. The shell puts each pipeline in its own group, which lets it do three things: hand the terminal to exactly that pipeline with <code>tcsetpgrp</code>, stop or resume the whole pipeline with one <code>kill(-pgid, sig)</code>, and wait for any process in the job with <code>waitpid(-pgid)</code>. The terminal then sends Ctrl+C and Ctrl+Z to the foreground group only, so the shell itself isn't affected.</p>
+    </div></div>
+  </div>
+</section>
+
+<nav class="pager measure"><a href="signals.html">&larr; 07 &middot; Signals</a><a href="proc.html">09 &middot; Reading the kernel: /proc &rarr;</a></nav>
+
+<footer class="footer">
+  <span>ForgeShell &middot; MIT licence</span>
+  <span><a href="source.html">Source, annotated</a> &middot; <a href="questions.html">Questions</a> &middot; <a href="https://github.com/JeyaVardhan-L/ForgeShell">GitHub</a></span>
+</footer>
+
+</main>
+
+<script src="assets/site.js"></script>
+<script src="assets/figures.js"></script>
+</body>
+</html>

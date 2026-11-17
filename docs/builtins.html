@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Builtins · ForgeShell, explained</title>
+<meta name="description" content="A field guide to ForgeShell, a Unix shell written in C: processes, file descriptors, pipes, signals, job control and /proc, with interactive figures.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,500;0,8..60,600;0,8..60,700;1,8..60,400;1,8..60,500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="index.html">ForgeShell <span>/ field guide</span></a>
+  <nav class="nav">
+    <a href="index.html" aria-current="page">Guide</a>
+    <a href="source.html">Source</a>
+    <a href="questions.html">Questions</a>
+    <a href="https://github.com/JeyaVardhan-L/ForgeShell">GitHub</a>
+  </nav>
+</header>
+
+<main class="page">
+
+<div class="divider">06 &middot; Builtins</div>
+<section class="chapter" id="builtins">
+  <header class="chapter-head">
+    <span class="num">CHAPTER 06</span>
+    <h2>Builtins</h2>
+    <p class="lede">Some commands can't be separate programs, because their whole job is to change the shell itself.</p>
+  </header>
+  <div class="prose">
+    <p>A process can change its <em>own</em> working directory and environment, never its parent's. If <code>cd</code> were a program, it would run in a child, change the child's directory, and exit, and the shell would be exactly where it was. So <code>cd</code>, <code>export</code>, <code>unset</code> and <code>exit</code> must run inside the shell. So must <code>jobs</code>, <code>fg</code> and <code>bg</code>, because the job table lives in the shell's memory.</p>
+    <p>ForgeShell runs a builtin in-process only when it's a single foreground command. Inside a pipeline (<code>help | head</code>) or in the background (<code>cd /tmp &amp;</code>) it runs in a forked child like anything else, so <code>cd /tmp &amp;</code> has no lasting effect. That matches Bash. <a class="srclink" href="source.html#src/executor.c@/* If it's a single command and it's a builtin">executor fast path</a></p>
+  </div>
+
+  <figure class="fig" data-fig="builtin">
+    <span class="fig-label">FIG_007</span>
+    <div class="fig-body"></div>
+    <figcaption><b>Where cd runs</b> Run <code>cd /tmp</code> both ways and compare where the shell ends up.</figcaption>
+  </figure>
+
+  <div class="prose">
+    <p><code>export KEY=value</code> calls <code>setenv</code>, which changes the shell's environment. Every child started afterwards gets a copy of it through <code>execvp</code>, which is how exported variables reach programs. ForgeShell has no separate "shell variables": anything you set is in the environment. <a class="srclink" href="source.html#src/builtins.c@int builtin_export">builtin_export</a></p>
+  </div>
+
+  <div class="qa">
+    <div class="row"><span class="lab">IN:</span><span class="q">Why is cd a builtin?</span></div>
+    <div class="row"><span class="lab">OUT:</span><div class="a">
+      <p>The current directory is a property of each process, and a child can't change its parent's. A <code>cd</code> program would change its own directory and then exit, leaving the shell where it was. So the shell calls <code>chdir()</code> on itself, and every command it starts afterwards inherits the new directory.</p>
+    </div></div>
+  </div>
+</section>
+
+<nav class="pager measure"><a href="pipes.html">&larr; 05 &middot; Pipes</a><a href="signals.html">07 &middot; Signals &rarr;</a></nav>
+
+<footer class="footer">
+  <span>ForgeShell &middot; MIT licence</span>
+  <span><a href="source.html">Source, annotated</a> &middot; <a href="questions.html">Questions</a> &middot; <a href="https://github.com/JeyaVardhan-L/ForgeShell">GitHub</a></span>
+</footer>
+
+</main>
+
+<script src="assets/site.js"></script>
+<script src="assets/figures.js"></script>
+</body>
+</html>
