@@ -1,0 +1,22 @@
+@title  Demo program: grabs N megabytes, touches every page, and holds them, so inspect and monitor have memory to show.
+@group  Demo programs
+
+== #define _POSIX_C_SOURCE 200809L
+Standard headers. No signal handling: `leak` just sleeps and exits.
+
+== int main(int argc, char **argv) {
+`leak [MB] [seconds]` defaults to 20 MB held for 5 seconds. It prints its PID straight away so you can run `inspect <PID>` from another terminal.
+
+== size_t bytes = (size_t)mb * 1024 * 1024;
+`(size_t)` *before* multiplying matters: `mb * 1024 * 1024` in `int` overflows above 2047 MB.
+
+**A bug fixed today.** This used to be `char *buf = malloc(bytes); memset(buf, 0x42, bytes); ... free(buf);`. The program never *reads* the memory, so under `-O2` GCC was allowed to delete the `malloc`, the `memset` and the `free` entirely, since they have no visible effect. The shell's `inspect` showed 2 MB instead of 300 MB, and that's how the bug was found. Declaring the pointer `volatile` means every write counts as an observable effect, so the compiler must keep them.
+
+== /* Touch every page so the kernel actually backs it with RAM (VmRSS) */
+`malloc` of a large block only reserves address space: VmSize grows, but no RAM is used yet. The kernel gives out physical pages lazily, on the first write to each 4 KB page (a *page fault*). Writing one byte per page is enough to make all of it resident, so VmRSS climbs to about 300 MB. That's the difference between VmSize and VmRSS, shown live.
+
+== printf("[leak] Memory touched.
+Then hold the memory for the requested time. `sleep` puts the process in state `S`, so it uses no CPU while you inspect it.
+
+== free((void *)buf);
+`free` takes a plain `void *`, so the `volatile` qualifier is cast away here. Freeing just before exit doesn't change much, since the kernel takes back all of a process's memory when it ends, but it keeps leak checkers like AddressSanitizer quiet.

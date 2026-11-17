@@ -1,0 +1,40 @@
+@title  Shared includes, constants, colors and the out-of-memory-safe allocation wrappers.
+@group  Headers
+
+== #ifndef FORGESHELL_COMMON_H
+An *include guard*: the first time this header is included, the macro gets defined. Any later include in the same file is skipped, so nothing is declared twice.
+
+== #ifndef _POSIX_C_SOURCE
+**Feature-test macros.** With `-std=c11`, glibc hides anything that isn't plain ISO C, including `getline`, `strdup`, `sigaction` and `kill`. Defining `_POSIX_C_SOURCE=200809L` (POSIX 2008) and `_GNU_SOURCE` turns those back on. The Makefile already passes both with `-D`, and the `#ifndef` checks avoid redefinition warnings. They must come before any system header is included.
+
+== #include <stdio.h>
+The headers almost every file needs. `stdbool.h` gives `bool`, `true` and `false`. `limits.h` gives `PATH_MAX` (4096 on Linux), used to size path buffers.
+
+== #define FORGE_VERSION "0.1.0"
+Version string (shown by `help`), the default prompt, and a maximum input size. `FORGE_MAX_INPUT` and `FORGE_DEFAULT_PROMPT` aren't used: `getline` handles any line length, and the prompt is printed directly in `main.c`.
+
+== /* ANSI Terminal Colors
+ANSI escape sequences: `ESC [ <code> m`. `\033` is ESC in octal. The terminal reads them as style changes instead of printing them. Code 0 resets, 1 is bold, 2 dim, and 31–36 set the text color. They're only printed when the output is a terminal (`isatty`).
+
+== /* Diagnostic and error helpers */
+Declarations for the helpers in `src/common.c`.
+
+== #include <stdarg.h>
+Needed for `va_list` in the helpers' implementations. It sits mid-file only because of where it was added. The usual style is to put all includes at the top.
+
+== static inline void *xmalloc(size_t size) {
+**The x-functions.** `malloc` can return `NULL`, and checking every call site is noisy and easy to forget. `xmalloc` checks once and exits with a message if memory runs out. For an interactive shell that's a reasonable policy: running out of memory here is extremely unlikely, and quitting cleanly beats crashing on a `NULL` pointer later. `static inline` in a header gives each source file its own copy without linker conflicts.
+
+The `size > 0` check exists because `malloc(0)` may legitimately return `NULL`.
+
+== static inline void *xrealloc(void *ptr, size_t size) {
+Same idea for `realloc`. If `realloc` fails, the old block is still valid, but here the program exits anyway, so it doesn't matter.
+
+== static inline char *xstrdup(const char *s) {
+`strdup` with a failure check. Passing `NULL` returns `NULL` instead of crashing, which the token list relies on for `TOKEN_EOF`.
+
+== static inline void safe_free(void **ptr) {
+Frees a pointer and sets it to `NULL`, so a second free becomes a harmless `free(NULL)`. Nothing calls it today. The code frees directly, and resets pointers by hand where it matters.
+
+== #endif /* FORGESHELL_COMMON_H */
+End of the include guard.

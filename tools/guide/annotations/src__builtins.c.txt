@@ -1,0 +1,51 @@
+@title  Commands the shell runs itself instead of starting a program: cd, pwd, exit, export, unset, help, plus dispatch.
+@group  Shell core
+
+== #include "builtins.h"
+`environ` is the process's environment, a `NULL`-terminated array of `"KEY=value"` strings that libc maintains. Child processes inherit it through `execvp()`, which is how `export` reaches programs you run later.
+
+== /* Forward declarations for proc observability builtins
+These are **weak symbols**, left over from building the project in stages. A weak declaration lets the program link even when no definition exists, and the function pointer is then `NULL`. That's why `execute_builtin` checks `&& builtin_inspect` before calling it. Now that `src/proc.c` always provides them, the weak attribute changes nothing. It's a nice thing to be able to explain if someone asks.
+
+== bool is_builtin(const char *name) {
+A plain list of names. The executor asks this before forking. A hash table would be overkill for twelve names: `strcmp` against a dozen short strings costs nothing next to a `fork()`.
+
+== int builtin_cd(int argc, char **argv) {
+`cd` must be a builtin: the working directory belongs to a process, and a child can't change its parent's.
+
+Three forms: `cd` or `cd ~` goes to `$HOME`, `cd -` goes to `$OLDPWD` (and prints it, as Bash does), and anything else is a path. Note that only a bare `~` is expanded: `cd ~/src` looks for a directory literally named `~`.
+
+== if (!getcwd(cwd_buf, sizeof(cwd_buf))) {
+The current directory is recorded *before* moving, so it can become `OLDPWD`. `getcwd` can fail (for example if the current directory was deleted), in which case `OLDPWD` is simply left as it was.
+
+== if (chdir(target) != 0) {
+`chdir()` is the actual system call. On failure, `forge_perror` prints the reason from `errno`, such as "No such file or directory" or "Permission denied".
+
+== if (cwd_buf[0] != '\0') {
+After a successful move, `OLDPWD` and `PWD` are updated in the environment, so child processes (and `cd -`) see them. `setenv(..., 1)` overwrites an existing value.
+
+== int builtin_pwd(int argc, char **argv) {
+Asks the kernel for the real current directory with `getcwd()`, rather than trusting `$PWD`, which anyone can change with `export`.
+
+== int builtin_exit(int argc, char **argv) {
+`exit` with no argument reuses the last command's status, so a script that ends with `exit` reports how its last command went. `exit 42` exits with 42. `atoi` turns junk like `exit abc` into 0, and values over 255 wrap around, because the kernel keeps only the low 8 bits of an exit status. A real shell would also warn about stopped jobs before exiting. This one doesn't.
+
+== int builtin_export(int argc, char **argv) {
+With no arguments, `export` lists the environment in the same `declare -x` format Bash uses.
+
+== for (int i = 1; i < argc; i++) {
+`export KEY=value` splits on the first `=` by temporarily writing a `'\0'` over it, so `argv[i]` reads as just the key, without copying. The `=` is put back afterwards on every path, success or failure, because `argv` still belongs to the parsed command and will be freed later.
+
+`setenv` copies both strings, so nothing points into `argv` once the command is freed. Exported variables reach later child processes because `execvp` passes `environ` along.
+
+== } else {
+`export KEY` without a value re-exports an existing variable. In this shell every variable is already in the environment, so this effectively does nothing. It exists so scripts written for Bash don't fail.
+
+== int builtin_unset(int argc, char **argv) {
+Removes each named variable from the environment. `unsetenv` only fails for invalid names (empty, or containing `=`).
+
+== int builtin_help(int argc, char **argv) {
+Prints the built-in reference. `%%` in a `printf` format prints a literal `%`, which is how `fg [%id]` shows up correctly.
+
+== int execute_builtin(int argc, char **argv) {
+Dispatch by name. It returns the builtin's exit status, which the executor stores as the shell's last status. The `/proc` builtins are called through the weak-symbol check described at the top of the file. The final error can't actually be reached today, because every name `is_builtin` accepts is handled here.

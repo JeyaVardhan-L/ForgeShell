@@ -1,0 +1,35 @@
+@title  Unit tests for the tokenizer and parser, in plain C with assert().
+@group  Build & tests
+
+== #include "parser.h"
+No test framework: `assert()` aborts the program with the failing expression and its line number, which is enough here. Two counters track how many tests ran and passed.
+
+== #define TEST(name) \
+Small macros that print `[RUN ]` and `[PASS]` lines. The `do { ... } while (0)` wrapper is the standard trick that makes a multi-statement macro behave like one statement, so it's safe after an `if` without braces.
+
+== static void test_simple_command(void) {
+The simplest case: one word gives one command, `argc == 1`, not background, and no next command. Every test frees its pipeline, so running the tests under AddressSanitizer also checks the parser for leaks.
+
+== static void test_arguments_and_spaces(void) {
+Extra spaces at the start, middle and end vanish: four words, four arguments.
+
+== static void test_single_quotes(void) {
+Inside single quotes, spaces and `$` are kept exactly: `'hello   world   $NOT_EXPANDED'` becomes one argument.
+
+== static void test_double_quotes_and_escapes(void) {
+Inside double quotes, `\"` produces a literal quote. The C string is hard to read because it's escaped twice, once for C and once for the shell. The shell sees `echo "hello \"quoted\" world"`.
+
+== static void test_redirections(void) {
+All three redirects on one command, and the append flag for `>>`. Note that `sort` is still `argc == 1`: redirect targets aren't arguments.
+
+== static void test_pipeline(void) {
+A three-stage pipeline becomes a linked list of three commands, each with its own arguments, and the last `next` is `NULL`.
+
+== static void test_background_job(void) {
+A trailing `&` sets `is_background` and isn't itself an argument.
+
+== static void test_syntax_errors(void) {
+Each invalid input must return `NULL`: empty or blank lines, a pipe at the start or end, redirects with no file name, unclosed quotes, and (added with today's fix) a pipeline stage with no command, `ls | > out.txt`. These cases also print error messages, which is expected output.
+
+== int main(void) {
+Runs every test. Because a failing `assert` aborts the program, reaching the summary means all of them passed. The exit status (0 or 1) is what `tests/test_runner.py` checks.

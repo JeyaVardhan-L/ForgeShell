@@ -1,0 +1,109 @@
+@title  The job table and job control: waiting, stopping, resuming, and moving jobs between foreground and background.
+@group  Job control
+
+== #include "jobs.h"
+Includes the executor header for `g_shell` (the terminal and the shell's group ID) and `sys/wait.h` for the `W*` status macros.
+
+== static Job *g_job_list = NULL;
+The job table is a singly linked list, kept in creation order. `static` makes it private to this file, so other code can only reach it through the functions below.
+
+== /* Job IDs work like Bash
+**A bug fixed while making the demo.** Job IDs used to come from a counter that only went up, and every foreground command also used a number, so after running `ls` your first background job showed as `[2]`. Now an ID is one more than the highest ID still in the table. Numbers restart at `[1]` once the table is empty, which matches Bash. The new test "Job numbering starts at [1]" covers it.
+
+== Job *job_create(pid_t pgid, const char *cmd_str) {
+A job starts out running, with no processes and not yet reported. It's appended at the tail, so `jobs` lists in creation order and the last job is the "current" one (`+`). Walking to the tail is O(n), which is fine for a table that rarely holds more than a few jobs.
+
+== void job_add_process(Job *job, pid_t pid) {
+A job is one process per pipeline stage. `ls | sort | head` is one job with three `Process` entries, all in one process group. Each process tracks its own `completed` and `stopped` flags, because they change one at a time as `waitpid` reports them.
+
+== Job *job_find_by_id(int id) {
+Linear search by job number, used by `fg 2` and `bg %2`.
+
+== Job *job_find_by_pgid(pid_t pgid) {
+Linear search by process group. Declared for completeness, but nothing calls it at the moment.
+
+== Job *job_get_most_recent(void) {
+The tail of the list: the job `fg` and `bg` use when you don't give a number, and the one marked `+` in `jobs`.
+
+== void job_free(Job *job) {
+Frees the process list, the saved command string and the job itself. Only `job_remove` calls it, after unlinking the job.
+
+== void job_remove(Job *job) {
+Standard linked-list removal: if the job is the head, move the head forward. Otherwise find the node *before* it and link around it. The `prev->next == job` check makes removing a job that isn't in the list a safe no-op.
+
+== bool job_is_completed(const Job *job) {
+A job is done only when **every** process in it is done. In `yes | head -n 1`, `head` exits first, and `yes` dies a moment later from `SIGPIPE` when it writes to a pipe nobody reads.
+
+== bool job_is_stopped(const Job *job) {
+A job counts as stopped when every process that hasn't finished is stopped and at least one is stopped. Ctrl+Z stops the whole group at once, but `waitpid` reports each process separately, so this check is what decides that the job as a whole is stopped.
+
+== static void update_process_status(pid_t pid, int status) {
+Takes a PID and the status word from `waitpid` and updates the matching `Process`. The status macros decode the kernel's encoding:
+
+`WIFSTOPPED`: stopped by a signal (Ctrl+Z, `SIGTTIN`). `WIFCONTINUED`: resumed with `SIGCONT`. Anything else is a real end: a normal exit (`WIFEXITED`) or death by a signal (`WIFSIGNALED`). Either way, the process is completed and the kernel has freed its zombie.
+
+== int wait_for_job(Job *job) {
+Blocks until the foreground job finishes or stops. `waitpid(-pgid, ...)` with a *negative* PID means "any child in process group `pgid`". `WUNTRACED` also returns when a child *stops*. Without it, Ctrl+Z would leave the shell waiting forever on a frozen job.
+
+== if (errno == ECHILD) {
+`ECHILD` means there are no children left in that group to wait for (something else already reaped them). The job is marked completed so the loop can't spin. `EINTR` means a signal handler interrupted the wait (`SIGCHLD` itself can do that), so the wait simply restarts.
+
+== update_process_status(pid, status);
+Each reaped process updates the table, and `last_status` remembers the most recent status as a fallback.
+
+== if (job_is_completed(job)) {
+Turns the raw status into the shell's exit status.
+
+**Which status?** Like Bash, the status of a pipeline is the status of its *last command*, the tail of the process list. That's not necessarily the last process to *finish*. This was a bug fixed today: the code used whichever process was reaped last, so `sleep 1 | false` reported 0 (success) because `sleep` finished after `false`. Bash says 1. The test "Pipeline exit status (last command)" now checks both orders.
+
+A normal exit gives the code passed to `exit()`. Death by signal gives **128 + signal number**, the convention every shell uses: Ctrl+C gives 130 and a segfault 139. The test suite checks for 139 with `kill -SEGV $$`.
+
+== } else if (job_is_stopped(job)) {
+The job was stopped (usually Ctrl+Z). Print the notice, record status 148 (128 + `SIGTSTP`), and leave the job in the table so `fg` or `bg` can resume it.
+
+`notified = true` is another fix from today: without it, `check_and_notify_jobs()` saw the same stopped job before the next prompt and printed "Stopped" a second time.
+
+== int put_job_in_foreground(Job *job, bool cont) {
+The foreground dance:
+
+1. Give the terminal to the job's group with `tcsetpgrp`. Now Ctrl+C and Ctrl+Z go to the job, not the shell.
+2. If resuming (`fg`), mark everything running and send `SIGCONT` to the whole group (`kill` with a negative PID targets a group).
+3. Wait.
+4. Take the terminal back and restore the saved terminal settings.
+
+== /* If reviving a stopped job, send SIGCONT */
+`notified` is reset here so that if the job is stopped again later, that stop gets reported too. `fg` echoes the command line, as Bash does.
+
+== /* Wait for the job to complete or be suspended */
+The shell blocks here while the job runs. This is the moment the shell "waits" for your command.
+
+== /* Reclaim terminal control for the shell */
+The shell takes the terminal back whether the job finished or was stopped. `tcsetattr(..., TCSADRAIN, ...)` restores the terminal settings saved at startup, once pending output has been written. That's how the shell recovers if a full-screen program such as `less` or `vim` is stopped while the terminal is in raw mode.
+
+== /* If completed, delete from job list */
+A finished foreground job is removed straight away, so it never shows up as "Done". A stopped one stays in the table.
+
+== int put_job_in_background(Job *job, bool cont) {
+Two cases. A new background job (`cmd &`) just prints `[id] pgid` and returns: the shell never waits for it, and it's reaped later by `check_and_notify_jobs`. A `bg` on a stopped job sends `SIGCONT` to its group so it runs again *without* the terminal.
+
+If a background job tries to read from the terminal, the kernel sends it `SIGTTIN`, which stops it, and `jobs` will show it as stopped.
+
+== void check_and_notify_jobs(void) {
+Runs before every prompt. `waitpid(-1, ..., WNOHANG | WUNTRACED | WCONTINUED)` asks: "has *any* child changed state? Don't block if not." The loop drains every pending change. This is what stops background jobs from piling up as **zombies**: a zombie is a finished process whose exit status nobody has collected yet.
+
+The `SIGCHLD` handler in `signals.c` sets a flag that nothing reads. All reaping happens here, at a safe point in the main loop, rather than inside the signal handler. The design is deliberate: almost nothing is safe to call from a signal handler.
+
+== /* Scan job list and notify
+Then the table is scanned. Finished jobs print `Done` and are removed, and stopped jobs print `Stopped` once (the `notified` flag). `next` is saved before `job_remove` frees `curr`, the same use-after-free precaution as in `free_pipeline`.
+
+== int builtin_jobs(int argc, char **argv) {
+`jobs` first reaps (so finished jobs show as Done and disappear), then prints each job with `+` for the most recent and `-` for the rest. The format `[1]+ Running    sleep 20 &` matches what you'd expect from Bash.
+
+== static Job *parse_job_spec(const char *arg) {
+Turns `fg`'s argument into a job. No argument means the most recent job, and `%2` and `2` both mean job 2. `atoi` returns 0 for junk, which is rejected.
+
+== int builtin_fg(int argc, char **argv) {
+`fg` brings a job to the foreground and resumes it (`cont = true`), then the shell waits for it. Error messages match Bash's, so `fg` with no jobs says `fg: current: no such job`.
+
+== int builtin_bg(int argc, char **argv) {
+`bg` resumes a stopped job in the background. Running `bg` on a job that's already running is harmless: `SIGCONT` to a running process does nothing.

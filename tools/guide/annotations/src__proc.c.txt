@@ -1,0 +1,137 @@
+@title  Reads live process data straight from Linux's /proc filesystem: inspect, monitor and ps.
+@group  Observability
+
+== #include "proc.h"
+`dirent.h` is for listing directories (`/proc` and `/proc/<pid>/fd`), `time.h` for clocks and timestamps, and `signal.h` for the temporary Ctrl+C handler that `monitor` installs.
+
+== static volatile sig_atomic_t g_monitor_interrupted = 0;
+`monitor` loops until Ctrl+C. The shell normally *ignores* `SIGINT`, so `monitor` swaps in a handler that only sets this flag, and the loop checks it. It's the same async-signal-safe flag pattern as in `signals.c`, and here the flag is actually read.
+
+`monitor` is a builtin, so it runs *inside the shell process*, which is the foreground group at that moment. That's why Ctrl+C reaches the shell here at all.
+
+== const char *proc_state_description(char state) {
+Converts the single-letter state from `/proc/<pid>/stat` into words. The interesting ones for interviews:
+
+`R` running or ready to run. `S` sleeping until an event (most processes, most of the time). `D` uninterruptible sleep, usually waiting on disk I/O, and even `SIGKILL` can't interrupt it. `Z` zombie: finished, but the parent hasn't collected its exit status. `T` stopped by Ctrl+Z or `SIGSTOP`.
+
+== static double get_system_uptime(void) {
+`/proc/uptime` holds two numbers: seconds since boot, then idle time summed over all CPUs. Only the first is read. It's needed because a process's start time in `/proc` is recorded as "ticks after boot", not as a date.
+
+== void proc_free_info(ProcInfo *info) {
+`cmdline` is the only heap-allocated field in `ProcInfo` (its length isn't known in advance). Everything else is fixed-size and lives inside the struct.
+
+== bool proc_get_info(pid_t pid, ProcInfo *info) {
+The core reader. It fills a `ProcInfo` from six sources under `/proc/<pid>/`. `memset` zeroes the struct first, so any field that can't be read stays 0 instead of garbage.
+
+`/proc` isn't on disk. Every read is answered by the kernel on the spot from its live process tables, so the values are current to that moment.
+
+== /* 1. Parse /proc/<pid>/stat */
+`stat` is one line of about 52 space-separated fields. If it can't be opened, the process doesn't exist (or has exited), and that's how `inspect` reports "not found".
+
+== /* Locate comm between first '(' and last ')' */
+**The classic trap.** Field 2 is the command name in parentheses, and the name may itself contain spaces or `)`: a program can call itself `a) b`. Splitting on spaces would shift every later field. The safe approach, used here and by `procps`, is to take everything between the *first* `(` and the *last* `)`, because the kernel never puts a `)` after the name.
+
+== size_t comm_len = close_paren - open_paren - 1;
+Copies the name into the fixed 256-byte `comm` field, truncating if needed, and always adds the terminating `'\0'` (`strncpy` doesn't add one when it truncates).
+
+== /* Parse fields after ')' */
+`close_paren + 2` skips `) ` and lands on field 3. In the `sscanf` format, `%*d` / `%*u` means "read and discard". Field by field:
+
+3 state, 4 ppid, 5 pgrp, 6 session, (7 tty, 8 tpgid, 9 flags, 10–13 page-fault counters skipped), 14 **utime**, 15 **stime**, (16–19 skipped), 20 **num_threads**, (21 skipped), 22 **starttime**.
+
+`sscanf` returns how many values it stored. Fewer than 8 means the format didn't match, so the read fails cleanly.
+
+== info->state = state;
+Copies the parsed values into the struct.
+
+== long clk_tck = sysconf(_SC_CLK_TCK);
+CPU times in `/proc` are in **clock ticks**, not seconds. `sysconf(_SC_CLK_TCK)` gives ticks per second (100 on almost every Linux system), with 100 as a fallback.
+
+Total CPU = (utime + stime) / ticks per second. Wall-clock runtime = uptime − start time, where start time is in ticks since boot. A busy process has CPU time close to its runtime, and a sleeping one has almost none. In the demo, `spin` uses about one second of CPU per second, while `leak` uses a fraction of a second in total.
+
+== /* 2. Parse /proc/<pid>/status */
+`status` is the human-readable version: one `Key:\tvalue` per line. It's read line by line, and only the memory lines and `Threads` are kept:
+
+**VmSize** is all the virtual memory the process has *reserved*. **VmRSS** (resident set size) is how much of it is actually in RAM right now. **VmData** is heap and data, **VmStk** the main thread's stack, **VmExe** the program's code. In the demo, `malloc(300 MB)` alone raises VmSize. Only *writing* to the pages raises VmRSS, because Linux hands out physical memory lazily, page by page.
+
+== } else if (strncmp(line, "Threads:", 8) == 0) {
+`Threads` is also in `stat` (field 20), and this overwrites it with the same number from `status`. Using either one would have been enough.
+
+== /* 3. Parse /proc/<pid>/cmdline */
+`cmdline` is the program's arguments separated by `'\0'` bytes, exactly as they sit in its memory. Replacing every NUL except the last with a space makes it printable. Kernel threads (and zombies) have an empty `cmdline`, so the `comm` name is used instead. It's opened `"rb"` because the content is binary.
+
+== /* 4. Resolve /proc/<pid>/exe link */
+`exe` is a symbolic link to the program file being run. `readlink` doesn't add a terminating `'\0'`, so it's added by hand using the returned length. Reading another user's `exe` needs extra permissions, hence the fallback text.
+
+== /* 5. Resolve /proc/<pid>/cwd link */
+Same idea for the process's current directory.
+
+== /* 6. Count open file descriptors in /proc/<pid>/fd/ */
+`/proc/<pid>/fd/` has one entry per open descriptor (`0`, `1`, `2`, ...), so counting entries, minus `.` and `..`, counts open files. That's how you'd spot a descriptor leak. The test suite uses the same trick on `/proc/self/fd`.
+
+== static void format_seconds
+Formats a duration as `1h 02m 03s`, `2m 05s` or `4.27s`. The `%02ld` pads minutes and seconds to two digits.
+
+== int builtin_inspect(int argc, char **argv) {
+`inspect <pid>` validates the argument (`atoi` returns 0 for junk, so 0 and negatives are rejected), reads everything with `proc_get_info`, and prints a report.
+
+== char runtime_str[64];
+The report prints the `/proc` source next to every value, so whoever reads it can check the number themselves with `cat /proc/<pid>/status`. One small inaccuracy: the "Process State" line says it comes from `status [State]`, but the value is actually parsed from `stat` field 3. Both files report the same state.
+
+== printf("\n%s[Memory Footprint]%s\n"
+Memory in kB as reported by the kernel, plus MB for easier reading (÷ 1024).
+
+== printf("\n%s[CPU Usage & Timing]%s\n"
+Raw ticks plus the computed totals. *User* time is spent running the program's own code, *system* time is spent in the kernel on its behalf. In the demo, nearly all of `leak`'s few ticks are system time: the kernel handing it 300 MB of fresh pages, one page fault at a time.
+
+== printf("\n%s[Paths & Invocation]%s\n"
+Program path, working directory and full command line. Freeing `cmdline` at the end keeps `inspect` from leaking memory each time it runs.
+
+== int builtin_monitor(int argc, char **argv) {
+`monitor <pid> [seconds]` samples a process repeatedly and prints a row each interval. The interval defaults to 1 second, and nonsense values fall back to 1.
+
+== ProcInfo prev_info;
+An initial sample is taken before the loop. CPU % needs **two** samples, because `/proc` only gives total CPU time since the process started. Usage *right now* is the difference between two samples divided by the time between them.
+
+== /* Install temporary SIGINT handler
+`sigaction(SIGINT, &sa_new, &sa_old)` installs the flag-setting handler and saves the old setting (`SIG_IGN`) so it can be put back on every exit path. Because `sa_flags` is 0 (no `SA_RESTART`), Ctrl+C makes `nanosleep` return early with `EINTR`, so the loop stops at once instead of finishing the current interval.
+
+== struct timespec prev_time;
+`CLOCK_MONOTONIC` is used for measuring intervals. It only ever moves forward, unlike the wall clock, which can jump when the date is set or NTP adjusts it.
+
+== while (!g_monitor_interrupted) {
+`nanosleep` may be cut short by a signal. It then writes the *remaining* time into `req`, and the inner loop sleeps again for the rest, unless the interruption was our Ctrl+C.
+
+== struct timespec curr_time;
+Take a new sample. If the process has gone away, `monitor` says so, restores the old `SIGINT` setting and returns.
+
+== double elapsed_sec
+**CPU % = (Δticks ÷ ticks per second) ÷ elapsed seconds × 100.** If the process used 100 ticks (1 s of CPU) during 1 s of real time, that's 100%, which is what `spin` shows in the demo. A process with several threads can go above 100%, one core's worth per thread.
+
+`delta_ticks` is unsigned, so the `cpu_pct < 0` check can never trigger. It's purely defensive.
+
+== time_t raw_time = time(NULL);
+A wall-clock timestamp for each row, formatted as `HH:MM:SS`.
+
+== printf("%-8s %-5d %-4c %6.1f%% %10.2fMB
+One row per sample: time, PID, state, CPU %, RSS and virtual size in MB, threads, runtime. `fflush` makes each row appear as soon as it's printed.
+
+== proc_free_info(&prev_info);
+The new sample becomes the old one for the next round. The old sample's `cmdline` is freed first, then `prev_info = curr_info` copies the struct, *including* the `cmdline` pointer. Ownership of that string moves to `prev_info`, so exactly one live copy of each string exists at any time.
+
+After the loop ends (Ctrl+C), the last sample is freed and the shell's original `SIGINT` setting (ignore) is put back.
+
+== printf("\n%sMonitoring stopped
+Back to the prompt. A design point worth mentioning: every exit path from `monitor` restores the old `SIGINT` setting. If one path forgot, the shell would be left with the temporary handler, and Ctrl+C at the prompt would set a flag nobody reads.
+
+== int builtin_ps(int argc, char **argv) {
+A minimal `ps`. Every running process has a directory in `/proc` named after its PID, so listing `/proc` and keeping the numeric names lists every process.
+
+== struct dirent *entry;
+`strtol` with `endptr` checks that the *whole* name is a number (`*endptr == '\0'`). That skips entries like `self`, `cpuinfo` and `sys`.
+
+== ProcInfo info;
+Each PID is read with the same `proc_get_info`. A process can exit between listing the directory and reading its files. That's a normal race, and `proc_get_info` returning false just skips it. RSS is shown in KB or MB depending on size.
+
+== closedir(proc_dir);
+Closes the directory handle. Without this, every `ps` would leak one descriptor.

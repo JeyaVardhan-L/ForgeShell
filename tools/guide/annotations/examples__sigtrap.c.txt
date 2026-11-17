@@ -1,0 +1,15 @@
+@title  Demo program: catches Ctrl+C and Ctrl+Z instead of dying, to show signal delivery from the shell.
+@group  Demo programs
+
+== #define _POSIX_C_SOURCE 200809L
+Counts how many Ctrl+Cs have arrived, using the signal-safe `sig_atomic_t` type.
+
+== static void sig_handler(int sig) {
+The first Ctrl+C is caught and counted, the second ends the program. Ctrl+Z is caught too, so the program *doesn't* stop. Run it in ForgeShell and Ctrl+Z appears to do nothing, which is a good way to show that `SIGTSTP` is a request a program can refuse. (`SIGSTOP` can't be caught or ignored.)
+
+Like `spin`, it calls `printf` and `exit` in a handler, which is fine for a demo but not async-signal-safe.
+
+== int main(void) {
+`pause()` sleeps until any signal is handled, then returns, and the loop goes back to waiting. The process uses no CPU while waiting.
+
+To stop it from inside ForgeShell, press Ctrl+C twice, or run `kill <pid>` from another terminal.

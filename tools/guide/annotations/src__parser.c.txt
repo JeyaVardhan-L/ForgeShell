@@ -1,0 +1,115 @@
+@title  Turns a raw line of text into a pipeline of commands, in two passes: tokenize, then parse.
+@group  Shell core
+
+== #include "parser.h"
+The parser is split into two stages, like a tiny compiler. The **lexer** (`tokenize`) turns characters into tokens: words and operators. The **parser** (`parse_pipeline`) turns tokens into structures the executor can run. Keeping them separate means quote handling lives in exactly one place, and the parser never has to think about characters.
+
+== typedef enum {
+The seven token kinds ForgeShell understands, plus `TOKEN_EOF` as an end marker so the parser never has to check array bounds and token type separately. Note there's no token for `;`, `&&`, `||`, `$` or `*`: those features don't exist in this shell, and the lexer treats those characters as ordinary word characters.
+
+== typedef struct {
+A token is a type plus its text. Operators carry their own text (`"|"`, `">>"`) only for error messages. Words carry the final, unquoted text: by the time a word becomes a token, its quotes have already been removed.
+
+== typedef struct {
+A growable array (`count` used, `capacity` allocated). Simpler and faster than a linked list for something that's built once and read front to back.
+
+== static void token_list_init
+Starts with room for 16 tokens. Most command lines fit without any reallocation.
+
+== static void token_list_add
+The classic doubling strategy: when the array is full, double its capacity. Doubling makes appends *amortised O(1)*: over n appends the total copying work is under 2n. Each token's text is copied with `xstrdup`, so the list owns its strings and the caller can free its buffer straight away.
+
+== static void token_list_free
+Frees every token's text, then the array, and resets the fields so a double free can't happen. It's called on every exit path, including syntax errors halfway through.
+
+== /* Lexical scanner
+`tokenize` walks the input with a single pointer `p`. There's no `strtok()`: `strtok` modifies the input, keeps hidden global state and can't understand quotes, so `"a | b"` would be split at the pipe.
+
+== while (*p) {
+Whitespace between tokens is skipped. Whitespace *inside* quotes is handled further down and never reaches this check.
+
+== if (*p == '|') {
+Single-character operators. Each check emits a token, advances one character and restarts the loop. Because these checks come before word scanning, `ls|wc` with no spaces still splits into three tokens.
+
+== if (*p == '>') {
+One character of lookahead (`*(p + 1)`) tells `>` apart from `>>`. Checking `>>` first is the standard "longest match" rule lexers use.
+
+== if (*p == '2' && *(p + 1) == '>') {
+`2>` only counts as an operator when it starts a token. There's a subtle quirk, though: the word scanner below also stops at `2>`, so `echo a2>f` lexes as `echo`, `a`, `2>`, `f`. Bash would read `a2` as the word and `>` as the redirect. A fix would be to only treat `2>` as an operator when it's at the start of a word.
+
+== /* Parse word
+Anything else starts a word. The word is collected into a growable buffer (`buf`, starting at 64 bytes and doubling), because quotes mean the token text isn't simply a slice of the input.
+
+A single word can mix styles: `he'll'"o"` becomes `hello`. That's why the inner loop keeps going until it hits an unquoted space or operator.
+
+== if (*p == '\'') {
+**Single quotes**: everything up to the next `'` is copied byte for byte, with no escapes at all. `'$HOME | x'` stays exactly that. If the input ends first, it's a syntax error, and both the half-built buffer and the token list are freed before returning `false`.
+
+== } else if (*p == '"') {
+**Double quotes**: spaces and operators are kept, but a backslash can escape `"` or `\`. Any other backslash is kept as is, so `"a\nb"` reaches `printf` as the four characters `a\nb`, and that's why `printf "a\nb"` works in the demo. There's no `$VAR` expansion, since the shell doesn't have variables.
+
+== } else if (*p == '\\' && *(p + 1) != '\0') {
+**Unquoted backslash**: the next character is taken literally, so `a\ b` is one word containing a space and `\|` is a literal pipe character. One edge case: the line from `getline()` still ends in `\n`, so a backslash typed at the end of a line escapes that newline and puts it inside the word. Bash would treat it as a line continuation instead.
+
+== } else if (isspace((unsigned char)*p)
+An unquoted space or operator ends the word. The operator is *not* consumed here: the outer loop sees it next and turns it into its own token.
+
+== } else {
+Ordinary characters are appended. Every append path checks `buf_len + 1 >= buf_cap` first, so there's always room for the final `'\0'`.
+
+== buf[buf_len] = '\0';
+The finished word becomes a `TOKEN_WORD`. `token_list_add` copies it, so the scratch buffer is freed right away.
+
+Note that an empty quoted string `""` still produces a word token with empty text, so `echo ""` passes an empty argument just like Bash.
+
+== token_list_add(list, TOKEN_EOF, NULL);
+The sentinel token. Every parser loop stops at `TOKEN_EOF`, which removes a whole class of off-by-one bugs.
+
+== static Command *create_command(void) {
+A fresh command with an empty, `NULL`-terminated `argv`. `execvp()` requires `argv` to end with a `NULL` pointer, and keeping that true at all times means the command is always ready to run.
+
+== static void command_add_arg
+Grows `argv` by exactly one slot each time (`argc + 2`: one for the new argument, one for the `NULL` terminator). Unlike the token list it doesn't double, which is fine because commands have few arguments. `realloc` may move the array, which is why the result is assigned back to `cmd->argv`.
+
+== static void free_command
+Frees everything a command owns: each argument, the array, and the three redirect file names. `free(NULL)` is legal, but the explicit checks make the ownership easy to read.
+
+== void free_pipeline
+Walks the linked list of commands, saving `next` *before* freeing the current node (reading `curr->next` after `free(curr)` would be a use-after-free), then frees the saved raw line and the pipeline itself.
+
+== JobPipeline *parse_pipeline
+The parser. It returns `NULL` for "nothing to run", whether that's a syntax error (a message is printed) or input that holds only whitespace.
+
+== if (list.count <= 1
+A list with only the EOF sentinel means there was nothing on the line.
+
+== JobPipeline *pipeline = xmalloc
+The pipeline keeps a copy of the original line (`raw_line`), minus its newline, purely for display: `jobs` prints it and `fg` echoes it.
+
+== Command *current_cmd = create_command();
+The parser is a simple state machine: there's always a "current command" that words and redirects attach to, and a `|` starts a new one. This is one-token lookahead parsing. The grammar is simple enough that it needs no recursion and no tree.
+
+== if (type == TOKEN_WORD) {
+Words become arguments of the current command, in order. Words can come after redirects too: `sort > out.txt -r` is valid and gives `sort -r` with output to `out.txt`.
+
+== } else if (type == TOKEN_IN_REDIR) {
+A redirect operator must be followed by a word, the file name. If it isn't (`cat <` or `cat < |`), that's a syntax error, and *everything* allocated so far is freed before returning. If a command has two `<` redirects, the last one wins, and the earlier name is freed so it doesn't leak.
+
+== } else if (type == TOKEN_OUT_REDIR
+`>` and `>>` share one branch and differ only in the `append_output` flag. The executor turns that flag into `O_APPEND` or `O_TRUNC`.
+
+== } else if (type == TOKEN_ERR_REDIR) {
+`2>` sends standard error to a file. There's no `2>&1` (merging stderr into stdout): the lexer has no token for `&1`.
+
+== } else if (type == TOKEN_PIPE) {
+Two syntax checks for pipes: a pipe can't come first (`| wc`), and it can't be last or doubled (`ls |`, `ls | | wc`). Then a new command is created and linked onto the end of the list, and parsing continues into it.
+
+== } else if (type == TOKEN_BACKGROUND) {
+`&` is only allowed at the end, so `a & b` is an error here (in Bash it would run `a` in the background and then `b`). It sets one flag for the whole pipeline, and the executor uses it to decide whether to wait.
+
+== token_list_free(&list);
+The tokens are no longer needed: every string the commands use was copied out of them.
+
+Two final checks. A line with only redirects (`> out.txt`) returns `NULL` quietly, so nothing runs. Bash would create an empty `out.txt`, but here nothing happens.
+
+The second check was added today. A *later* stage of a pipeline with no command, as in `ls | > out.txt`, used to slip through. The executor then called `execvp(NULL, ...)` and the child crashed with a segmentation fault. Now it's a syntax error, and `tests/test_parser.c` checks for it.

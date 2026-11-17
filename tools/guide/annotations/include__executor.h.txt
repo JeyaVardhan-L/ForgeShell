@@ -1,0 +1,17 @@
+@title  Global shell state and the executor's public functions.
+@group  Headers
+
+== #ifndef FORGESHELL_EXECUTOR_H
+The executor header pulls in the system headers for processes and terminals: `sys/wait.h` (`waitpid` and the `W*` macros), `fcntl.h` (`open` and the `O_*` flags), `termios.h` (`struct termios`, `tcsetattr`).
+
+== /* Shell execution state */
+Everything the shell needs to remember between commands. `shell_terminal` is normally descriptor 0, and `shell_tmodes` is the snapshot of terminal settings taken at startup and restored after every foreground job.
+
+== extern ShellState g_shell;
+`extern` *declares* the global without creating it. It's defined once, in `executor.c`. Any file that includes this header (`jobs.c`, `builtins.c`) can use it.
+
+== /* Initialize shell environment
+The three entry points: one-time setup, applying redirects to the current process, and running a parsed pipeline.
+
+== #endif /* FORGESHELL_EXECUTOR_H */
+End of the include guard.

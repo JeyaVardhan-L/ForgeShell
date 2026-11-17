@@ -1,0 +1,120 @@
+@title  Starts processes: shell setup, redirections, builtins, and the fork/pipe/exec loop for pipelines.
+@group  Shell core
+
+== #include "executor.h"
+`executor.h` brings in everything process-related: `sys/wait.h` for `waitpid`, `fcntl.h` for `open` flags, `termios.h` for terminal control, and the parser, job and signal headers.
+
+== ShellState g_shell = {
+The shell's global state, in one struct. It holds the last exit status (what Bash calls `$?`), whether we're interactive, the shell's own process group ID, the terminal's file descriptor, and the saved terminal settings. The designated initializers (`.field = value`) are C99 syntax. Everything here is reset in `shell_init()` anyway.
+
+== void shell_init(void) {
+**Interactive or not?** `isatty(0)` asks whether stdin is a terminal. Job control (process groups, Ctrl+Z, `fg`) only makes sense with a terminal, so all of the setup below is skipped when commands are piped in, as they are in the test suite.
+
+== /* Loop until we are in the foreground process group */
+A shell started in the background (for example `./bin/forge &` from Bash) must not grab the terminal. `tcgetpgrp()` returns the terminal's foreground process group. While that isn't our group, we send `SIGTTIN` to our own group, which stops us. When the user brings us to the foreground with `fg`, we resume, loop, and pass the check. This is the textbook pattern from the GNU libc manual's "Implementing a Shell" chapter.
+
+== /* Set up signal dispositions
+From here on, the shell ignores Ctrl+C, Ctrl+Z, `SIGTTIN` and `SIGTTOU`, and watches `SIGCHLD`. The order matters: `SIGTTOU` has to be ignored *before* the `tcsetpgrp()` call a few lines down, because a process that isn't in the foreground group gets `SIGTTOU` (and stops) when it tries to change the terminal's foreground group, unless it ignores that signal.
+
+== /* Place shell into its own process group.
+The shell puts itself in its own process group, with its PID as the group ID, so that keyboard signals aimed at a job's group never hit the shell.
+
+The `getpgrp() != pid` check fixes a real bug found while recording the demo. When a terminal emulator starts the shell directly, the shell is a *session leader* and already leads its own group. POSIX says `setpgid()` on a session leader fails with `EPERM`, so the old code printed `forge: setpgid: Operation not permitted` at startup.
+
+== /* Acquire terminal control */
+Makes the shell's group the terminal's foreground group. From now on, only the foreground group can read from the terminal, and Ctrl+C or Ctrl+Z are delivered to whichever group is in the foreground.
+
+== /* Save default terminal attributes */
+Saves the terminal's settings (echo, line editing, special characters). If a program such as `vim` or `less` changes them and then crashes or is stopped, the shell restores these saved settings when it takes the terminal back.
+
+== jobs_init();
+Starts with an empty job table. This runs even when the shell isn't interactive, because background jobs (`&`) still work without a terminal.
+
+== int apply_redirections(const Command *cmd) {
+Applies a command's `<`, `>`/`>>` and `2>` redirects to the *current* process. It's called in the forked child just before `execvp()`, and in the shell itself (temporarily) for builtins.
+
+== /* Stdin redirection: < input_file */
+The redirect pattern, the same for all three:
+
+1. `open()` the file. The kernel returns the lowest free descriptor, say 3.
+2. `dup2(fd, 0)` makes descriptor 0 (stdin) point at the same open file as fd 3. If 0 was open, it's closed first, atomically.
+3. `close(fd)` drops the now-unneeded extra descriptor.
+
+The program then reads "stdin" without knowing it's a file. That's the whole trick behind redirection.
+
+== /* Stdout redirection: > or >> output_file */
+For output, the flags decide the behaviour. `O_WRONLY | O_CREAT` writes and creates the file if it's missing. Then `O_TRUNC` empties an existing file (`>`), while `O_APPEND` makes every write go to the current end of the file (`>>`). `0644` is the permission for new files (owner read/write, others read), and the process's `umask` can reduce it further.
+
+== /* Stderr redirection: 2> error_file */
+The same pattern onto descriptor 2. `2>` always truncates: there's no `2>>`.
+
+The order of these three blocks only matters when they fail. If the input file is missing, nothing else is redirected.
+
+== static int execute_single_builtin(Command *cmd) {
+**Why builtins run inside the shell:** `cd` has to change *the shell's* working directory, and `export` the shell's environment. A forked child would change its own copy and then exit, and the shell would see no change. So a lone builtin runs in-process, without forking.
+
+But a builtin can still be redirected (`pwd > where.txt`), and redirecting the shell's own stdout would break the shell. So the real descriptors 0, 1 and 2 are first saved with `dup()`, which returns new descriptors pointing at the same terminal.
+
+== int status = 0;
+Run the builtin with the redirects applied, then `dup2()` the saved copies back over 0, 1 and 2, and close the copies. The shell's own stdout is the terminal again, as if nothing happened.
+
+`exit` is the exception: it calls `exit()` inside `execute_builtin`, so the shell ends before the restore. That's harmless, because the process is going away anyway.
+
+== int execute_pipeline(JobPipeline *pipeline) {
+The core of the shell: given parsed commands, create the processes. First count how many commands are in the pipeline.
+
+== /* If it's a single command and it's a builtin
+Fast path: a single builtin in the foreground runs in-process (see above). A builtin in a pipeline (`help | head`) or in the background (`cd /tmp &`) goes through the fork path instead, so it runs in a child, and `cd /tmp &` changes nothing in the shell, just as in Bash.
+
+== /* Allocate Job entry for tracking */
+Every external command is a *job*, even a plain foreground `ls`. The job's process group isn't known yet (it will be the first child's PID), so it starts as 0.
+
+== pid_t pgid = 0;
+`prev_pipe_read` carries the read end of the previous command's pipe into the next loop iteration. `-1` means "no previous pipe": the first command reads from the shell's stdin (or its `<` file).
+
+== for (int i = 0; i < num_cmds; i++, cmd = cmd->next) {
+One iteration per command. Every command except the last gets a fresh pipe *before* forking: `pipefds[1]` is the write end (this command's stdout) and `pipefds[0]` the read end (the next command's stdin). The pipe must be created before `fork()` so both parent and child inherit it.
+
+If `pipe()` fails (for example because the process ran out of descriptors), the function returns. Note that earlier children in the same pipeline are already running and stay in the job table, unwaited. That's a known rough edge.
+
+== pid_t pid = fork();
+`fork()` duplicates the shell. It returns twice: `0` in the child and the child's PID in the parent. On failure (`-1`, usually too many processes or out of memory) the descriptors this iteration owns are closed so they don't leak.
+
+== if (pid == 0) {
+**Child side.** The first child's PID becomes the group ID for the whole pipeline. This works because `pgid` is a copy of the parent's variable at fork time: it's 0 for the first child and already set for the later ones.
+
+== /* Put child in job's process group */
+`setpgid(0, pgid)` moves this child into the job's group. The parent makes *the same call* for this child right after `fork()`. Whichever runs first wins, and the second call is harmless. Doing it in both places removes a race: the parent may call `tcsetpgrp()` or `kill(-pgid)` before the child has been scheduled, and that would fail if the group didn't exist yet.
+
+== /* If foreground and interactive, assign terminal control */
+A foreground job takes the terminal itself, again duplicated in the parent (`put_job_in_foreground`) for the same race reason. This only works because `SIGTTOU` is still ignored here: the child inherited the shell's dispositions and hasn't reset them yet. Swap this with the next step and a child in a pipeline could stop itself on `SIGTTOU`.
+
+== /* Restore default signal handlers */
+The shell ignores Ctrl+C, but the program you run must not, otherwise Ctrl+C couldn't stop `sleep`. Ignored signals stay ignored across `exec()`, so the child has to reset them to default *before* exec. Handled signals are reset by `exec()` automatically, because the handler code no longer exists.
+
+== /* Wire pipeline input */
+If there's a previous pipe, its read end becomes this process's stdin. After `dup2`, descriptor 0 *is* the pipe, so the original descriptor is closed.
+
+== /* Wire pipeline output */
+If this isn't the last command, stdout goes into the new pipe's write end. The child also closes the read end it doesn't use. This closing isn't optional. A reader sees end-of-file only when *every* write end of a pipe is closed, in every process. One forgotten descriptor and `wc` waits forever.
+
+== /* Apply file descriptor redirections */
+File redirects are applied *after* the pipe wiring, so they win: in `ls > out.txt | wc`, `ls` writes to the file and `wc` reads an empty pipe. That's also how Bash behaves.
+
+== /* Execute builtin if part of a pipeline */
+A builtin inside a pipeline runs in this child and then `_exit`s with its status. `_exit()` instead of `exit()` matters: `exit()` would flush stdio buffers the child inherited from the shell (text could print twice) and run the shell's `atexit` handlers inside the child.
+
+== /* Execute external command */
+`execvp()` replaces this process's program with the command. The `p` means it searches `PATH`, the `v` means arguments come as an array. On success it never returns, because the code that called it no longer exists. The PID, open descriptors, process group and ignored or default signal settings all carry over.
+
+== if (errno == ENOENT) {
+Reaching this line means `exec` failed. The exit codes follow the shell convention: **127** for "command not found" and **126** for "found but can't run" (no permission, a directory, a bad binary format). The tests check both.
+
+== /* Parent process */
+**Parent side.** The parent records the group ID from the first child's PID, makes its half of the double `setpgid` call, and adds the PID to the job.
+
+== if (prev_pipe_read != -1) {
+The parent closes its copy of the previous pipe's read end, since only the child that was just forked needs it, and its copy of the new pipe's write end. It keeps the new read end for the next command. After the loop, the shell holds *no* pipe descriptors. The test suite checks this by counting entries in `/proc/self/fd` after running several pipelines.
+
+== if (pipeline->is_background) {
+Every process now exists. A background job prints `[1] <pgid>` and returns at once, with no waiting. A foreground job hands the terminal over, waits for the job to finish or stop, and takes the terminal back (see `src/jobs.c`).

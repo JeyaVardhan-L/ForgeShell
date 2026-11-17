@@ -1,0 +1,19 @@
+@title  The data structures a command line becomes: Command and JobPipeline.
+@group  Headers
+
+== #ifndef FORGESHELL_PARSER_H
+Include guard, plus `common.h` for `bool` and the basic types.
+
+== /* Single command in a pipeline */
+One stage of a pipeline, such as `grep -v dog > out.txt`:
+
+`argv` / `argc`: the program name and its arguments, ending with `NULL` so it can go straight to `execvp`. Then one optional file name per redirect: `input_file` for `<`, `output_file` for `>` or `>>` (with `append_output` telling them apart), and `error_file` for `2>`. `next` links to the following stage, so `a | b | c` is a linked list of three `Command`s.
+
+== /* Complete parsed pipeline representing a job */
+The whole line: the first command, whether it ended in `&`, and the original text (shown by `jobs`). One `JobPipeline` becomes one job, and one process group, when it runs.
+
+== /* Parse an input line
+The parser's public interface is just these two functions. Every other parser function is `static` (file-private), so the tokenizer can change freely without touching any other file.
+
+== #endif /* FORGESHELL_PARSER_H */
+End of the include guard.

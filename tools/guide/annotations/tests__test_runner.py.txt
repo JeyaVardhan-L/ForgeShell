@@ -1,0 +1,102 @@
+@title  The integration test suite: runs the real bin/forge binary with scripted input and checks what comes out.
+@group  Build & tests
+
+== #!/usr/bin/env python3
+Integration tests treat the shell as a black box: start `bin/forge`, feed it commands on stdin, and check stdout, stderr, the exit code and any files it created. They test what a user would see, so the same suite works no matter how the C code is organised inside.
+
+== REPO_ROOT = os.path.abspath
+Paths to the binaries under test, worked out from this file's location, so the suite runs from any directory.
+
+== TEMP_DIR = os.path.join
+A scratch folder, created fresh and deleted at the end. The shell runs with it as its working directory, so redirect tests write their files there and not into the repository.
+
+== GREEN = "\033[32m"
+Colors for PASSED and FAILED, the same ANSI codes the shell uses.
+
+== passed = 0
+Global counters, plus `run_test`, which runs one test function and counts it. A failed `assert` is a test failure. Any other exception, a crash in the test itself, is reported as ERROR so the two are easy to tell apart.
+
+== def run_shell(input_text):
+The key helper. It starts ForgeShell with pipes for stdin, stdout and stderr and sends the whole script at once. `communicate()` writes the input, closes stdin (which the shell sees as EOF, so it exits) and collects everything printed.
+
+Because stdin is a pipe, not a terminal, the shell runs **non-interactively**: no prompt, no terminal control, no Ctrl+Z. That makes the tests deterministic, but it also means the interactive parts of job control can't be tested this way. Testing those would need a pseudo-terminal, which is how `tools/record_demo.py` drives the shell.
+
+== def test_normal_exit():
+`exit 0` after a command must give exit code 0, and the output must arrive.
+
+== def test_nonzero_exit():
+`exit 42` must make the shell's exit code 42, so a shell running a script reports failure correctly.
+
+== def test_command_not_found():
+An unknown command prints "command not found" and gives **127**, the code set in the child after `execvp` fails with `ENOENT`.
+
+== def test_child_crash_signal():
+`kill -SEGV $$` makes a child shell send itself a segmentation fault. ForgeShell must report it the way every shell does: exit status **139** (128 + 11) and a "Segmentation fault" message. This checks the `WIFSIGNALED` branch.
+
+== def test_zombie_prevention():
+Starts five background jobs that exit at once, waits, then runs `jobs`. The shell must reap them all without crashing or hanging.
+
+A stronger version would check `/proc` for zombie (`Z`) children of the shell. This test mainly checks that reaping doesn't break anything.
+
+== def test_c_unit_parser():
+Runs the C parser tests as part of this suite, so `make test` covers both levels.
+
+== def test_shell_quoting():
+Quoting end to end: spaces inside both kinds of quotes survive all the way to `echo`'s output.
+
+== def test_stdout_redirection():
+Each redirect test runs a command, then opens the resulting file from Python to check its contents. This covers `>` and `<`.
+
+== def test_append_redirection():
+`>` then `>>` must leave exactly two lines. A mistake like using `O_TRUNC` for `>>` would leave one.
+
+== def test_stderr_redirection():
+`ls` on a missing file writes its complaint to stderr, and `2>` must capture it in the file. The check accepts both GNU and BSD wording.
+
+== def test_single_pipe():
+A pipe in the middle of a command: `printf | grep`.
+
+== def test_multiple_pipes():
+A three-stage pipeline, which exercises the `prev_pipe_read` hand-off between loop iterations.
+
+== def test_large_pipeline_no_deadlock():
+30,000 lines through `yes | head | wc`. A pipe holds only 64 KB by default, so this only completes if the stages really run at the same time, and if `yes` gets `SIGPIPE` when `head` exits. If a pipe end were left open somewhere, `wc` would never see EOF and the test would hang.
+
+== def test_pipeline_exit_status():
+Added with the exit-status fix. `sleep 0.3 | false` must exit 1 even though `sleep` finishes *after* `false`, and the reverse order must exit 0. Testing both orders proves the status comes from the last *command*, not from whichever process finished last.
+
+== def test_descriptor_closure():
+After several pipelines, `ls -1 /proc/self/fd | wc -l` counts the descriptors a *child* inherited from the shell. If the shell were leaking pipe ends, this number would grow. The limit of 5 allows for 0, 1, 2, the directory `ls` is reading, and a little slack.
+
+== def test_builtin_pwd_and_cd():
+`cd /tmp`, `pwd`, then `cd -` back. This checks that `cd` ran *inside* the shell process: if it had run in a child, the next `pwd` wouldn't show `/tmp`.
+
+== def test_builtin_export_and_unset():
+`export` must reach a *child* process, checked with `/bin/sh -c 'echo $TEST_VAR'`, and `unset` must remove it again.
+
+== def test_builtin_help():
+`help` prints its reference.
+
+== def test_background_job_and_reaping():
+A short background job shows as Running, then as Done after it finishes. That's the whole reap-and-report path in `check_and_notify_jobs`.
+
+== def test_job_numbering():
+Added with the job-ID fix: two foreground commands first, then a background job that must be `[1]`. Before the fix it was `[3]`.
+
+== def test_fg_builtin():
+`fg 1` on a background job must wait for it and return 0. Without a terminal this tests the waiting, not the terminal hand-off.
+
+== def test_proc_inspect():
+`inspect 1` reads PID 1 (init or systemd), which always exists. The test checks that the report cites its `/proc` sources.
+
+== def test_proc_inspect_missing():
+A PID that can't exist must give a clean error, not a crash.
+
+== def test_proc_ps():
+`ps | head -n 5` checks the header and also exercises a builtin inside a pipeline (it runs in a forked child).
+
+== def test_proc_monitor_termination():
+Honest note: despite its name, this test only checks that the shell starts a background job and exits cleanly. It never runs `monitor`, whose loop needs Ctrl+C or the watched process to exit. A real test could start `sleep 1 &`, run `monitor <pid>` and check for "has terminated".
+
+== def main():
+Creates the scratch folder, runs every test by category, deletes the folder, and exits with 0 only if nothing failed. That exit code is what makes CI go red or green.

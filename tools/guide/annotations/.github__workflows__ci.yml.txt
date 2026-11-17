@@ -1,0 +1,14 @@
+@title  Continuous integration: every push is built and tested with two compilers, plain and sanitized.
+@group  Build & tests
+
+== name: CI
+Runs on pushes to `main` and feature branches, on pull requests, and on demand (the "Run workflow" button in the Actions tab).
+
+== jobs:
+A **matrix** runs four copies of the job: gcc and clang, each in a release build and in an AddressSanitizer + UBSan build. `fail-fast: false` lets all four finish even if one fails, so you see every combination's result. `CC` is passed to `make` through the environment, which works because the Makefile uses `CC ?= gcc`.
+
+== steps:
+Check out the code, build the right variant, and run the full Python test suite against it. Under the sanitizers, any memory error or undefined behaviour during the tests aborts the shell, and the test that triggered it fails.
+
+== guide:
+A second job keeps this guide honest. It rebuilds the annotated source data and fails if the result differs from `docs/assets/source-data.js`. If code changes and a note's anchor no longer matches, or the data wasn't regenerated, CI goes red.

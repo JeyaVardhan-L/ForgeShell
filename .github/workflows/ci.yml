@@ -30,3 +30,12 @@ jobs:
 
       - name: Run test suite
         run: python3 tests/test_runner.py
+
+  guide:
+    name: guide is in sync with the source
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check docs/assets/source-data.js
+        run: python3 tools/guide/build.py --check

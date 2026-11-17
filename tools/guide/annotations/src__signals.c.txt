@@ -1,0 +1,32 @@
+@title  How the shell and its children treat signals: Ctrl+C, Ctrl+Z, terminal access and child state changes.
+@group  Job control
+
+== #include "signals.h"
+`volatile sig_atomic_t` is the only type the C standard guarantees a signal handler can safely write and the main program safely read. `sig_atomic_t` is read and written in one indivisible step, and `volatile` stops the compiler from keeping the value in a register where the handler's write would never be seen.
+
+== static void handle_sigchld(int sig) {
+The `SIGCHLD` handler does the one thing that is always safe: set a flag. A signal can arrive in the middle of *any* instruction, including halfway through a `malloc` or `printf` in the main program. Calling `printf`, `malloc` or the job-table code from here could corrupt their internal state. Only *async-signal-safe* functions (`write`, `_exit`, `waitpid`, ...) may be called from a handler.
+
+Honest note: nothing ever reads `g_sigchld_flag`. Reaping happens before every prompt in `check_and_notify_jobs()`. The handler still has two uses: it shows the safe pattern, and installing it makes sure `SIGCHLD` isn't ignored. If `SIGCHLD` were set to `SIG_IGN`, Linux would reap children automatically and `waitpid` could never see their exit statuses.
+
+== void signals_init_shell(void) {
+`sigaction` is the reliable, modern way to install a handler. The old `signal()` has historically varied between systems.
+
+`SA_RESTART`: if the signal interrupts a slow system call such as `read()` inside `getline()`, the kernel restarts that call instead of failing it with `EINTR`. Without it, every background job finishing would make the prompt's `getline()` return an error.
+
+`SA_NOCLDSTOP`: don't send `SIGCHLD` when a child merely stops. Stops are still found by polling with `WUNTRACED`.
+
+== /* Ignore interactive job control and terminal signals in the shell */
+The interactive shell must survive the keys meant for its jobs:
+
+`SIGINT` (Ctrl+C) and `SIGQUIT` (Ctrl+\\) must not kill the shell. `SIGTSTP` (Ctrl+Z) must not stop the shell. `SIGTTIN` and `SIGTTOU` are what the kernel sends to a *background* group that reads from, or takes control of, the terminal. Ignoring `SIGTTOU` is what lets the shell call `tcsetpgrp()` while it isn't the foreground group.
+
+In practice the keyboard signals are only sent to the *foreground* group, which is the job's group while a job runs. Ignoring them is the safety net for the moments when the shell itself is in the foreground.
+
+== void signals_reset_child(void) {
+Runs in each forked child just before `exec`. **Ignored signals stay ignored across `exec`**, so without this reset, `sleep 100` would also ignore Ctrl+C and the user couldn't stop it. Setting `SIG_DFL` restores the normal behaviour: Ctrl+C terminates, Ctrl+Z stops.
+
+`SIGCHLD` is reset too, so the new program starts with the default instead of a handler address that won't exist after `exec`. (`exec` would reset handled signals anyway. Being explicit costs nothing.)
+
+== /* Unblock all signals */
+The *signal mask* (the set of blocked signals) is also inherited across `fork` and `exec`. The shell doesn't block anything today, but clearing the mask means a future change that blocks `SIGCHLD` around a critical section can't leave child programs with signals they never receive.

@@ -1,0 +1,14 @@
+@title  Message helpers shared by every file: plain log, colored error, errno error, and debug output.
+@group  Shell core
+
+== #include "common.h"
+`forge_log` is a `printf`-style function that writes `forge: <message>` to stderr. The `...` and `va_list` / `va_start` / `vfprintf` / `va_end` are how C passes a variable number of arguments on to another printf-style function. Nothing calls `forge_log` at the moment.
+
+== void forge_error(const char *fmt, ...) {
+Used for errors the shell itself detects (syntax errors, bad arguments). Messages always go to **stderr**, never stdout, so `cmd > out.txt` doesn't capture the shell's complaints, and tests can check errors and output separately. The label is red only when stderr is a terminal, so log files never get escape codes in them.
+
+== void forge_perror(const char *msg) {
+For failed system calls. `strerror(errno)` turns the error number the kernel set into text like "No such file or directory". Like the C library's own `perror()`, it must be called *right after* the failing call, before anything else can overwrite `errno`.
+
+== void forge_debug(const char *fmt, ...) {
+Debug messages compiled in only for `make debug` and `make asan`, which define `DEBUG`. In a normal build the body is removed by the preprocessor, and `(void)fmt` silences the unused-parameter warning. No call sites use it today, but it's ready for tracing.

@@ -1,0 +1,40 @@
+@title  The read-parse-execute loop. Every command you type passes through here.
+@group  Shell core
+
+== #include "common.h"
+The entry point includes the headers for the three parts it drives: the parser (text to structures), the executor (structures to processes) and the job table (for background-job notices). `common.h` brings the shared basics, and `ctype.h` is for `isspace()`.
+
+== static void print_prompt
+Prints `forge> ` only when the shell is interactive, meaning stdin is a terminal. When the tests pipe commands into ForgeShell there's no human to read a prompt, so none is printed. The prompt is only colored when stdout is also a terminal, so escape codes never end up in a file or pipe.
+
+`fflush(stdout)` matters: stdout is line-buffered on a terminal and the prompt has no newline, so without the flush it would sit in the buffer and never appear.
+
+== static bool is_all_whitespace
+A tiny helper so a blank line (or just spaces and a newline) is skipped before it reaches the parser. The `(unsigned char)` cast is the correct way to call `isspace()`: passing a negative `char` (bytes above 127 on most platforms) is undefined behaviour.
+
+== int main(int argc, char **argv)
+`argc` and `argv` are unused: ForgeShell has no command-line flags and always reads commands from stdin. The `(void)` casts silence the unused-parameter warnings that `-Wextra` would otherwise print.
+
+`shell_init()` runs once. It works out whether we're interactive, takes control of the terminal, sets up signal handling and empties the job table. See `src/executor.c`.
+
+== char *line = NULL;
+`getline()` manages the buffer for us. Starting with `NULL` and `0` tells it to `malloc` a buffer, and it will `realloc` as needed for longer lines. The same buffer is reused on every pass and freed once at the end.
+
+== while (1) {
+The heart of the shell. Each pass:
+
+1. `check_and_notify_jobs()` reaps any finished or stopped children without blocking and prints `[1]+ Done ...` lines. It runs *before* the prompt, which is why Bash-style shells report finished background jobs just before the next prompt rather than mid-typing.
+
+2. Print the prompt and block in `getline()` until a full line arrives.
+
+== if (nread == -1) {
+`getline()` returns -1 at end of input: Ctrl+D on an empty line at a terminal, or the end of a piped script. Printing a newline keeps the user's real shell prompt from landing on the same line as `forge>`.
+
+== if (is_all_whitespace(line)) {
+Empty lines are skipped without touching the parser or the job table.
+
+== JobPipeline *pipeline = parse_pipeline(line);
+Parse, run, free. `parse_pipeline()` returns `NULL` both for syntax errors (after printing a message) and for input that has no command, so in both cases we simply loop. Freeing the pipeline right after execution means the shell's own memory stays flat no matter how many commands you run.
+
+== free(line);
+On EOF the loop breaks, the line buffer is released, and the shell exits with the status of the last command. That's how `exit` codes propagate when ForgeShell runs a script from a pipe.

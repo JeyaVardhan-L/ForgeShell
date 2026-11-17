@@ -1,0 +1,61 @@
+@title  How the shell, the tests and the demo programs are built.
+@group  Build & tests
+
+== CC ?= gcc
+`?=` sets a value only if it isn't already set, so `CC=clang make` builds with Clang. The CI runs both compilers this way.
+
+The flags: `-Wall -Wextra -Wpedantic` turn on most warnings and strict ISO checking. `-std=c11` is the language version. The two `-D` feature macros make POSIX and GNU functions visible (see `common.h`). `-Iinclude` lets sources write `#include "parser.h"`.
+
+== SRC_DIR = src
+Folder names in one place: sources, headers, object files (`build/`), binaries (`bin/`).
+
+== SRCS = $(wildcard $(SRC_DIR)/*.c)
+Every `.c` in `src/` is part of the shell automatically, so a new file needs no Makefile change. `patsubst` maps `src/x.c` to `build/x.o`. `DEPS` lists the matching `.d` dependency files (see `-MMD` below).
+
+== TARGET = $(BIN_DIR)/forge
+Outputs: the shell, the parser unit-test binary, and the three demo programs.
+
+== .PHONY: all debug asan test clean help examples
+`.PHONY` marks targets that aren't files. Without it, a file called `test` in the folder would make `make test` think there was nothing to do.
+
+== all: CFLAGS += -O2
+**Target-specific variables.** `all: CFLAGS += -O2` adds optimization only when building the default target. That optimization is exactly what deleted the unused `malloc` in `examples/leak.c`. See that file for the story.
+
+== debug: CFLAGS += -g3 -O0 -DDEBUG
+`make debug`: full debug info (`-g3`), no optimization (`-O0`, so the debugger matches the source line by line), and `DEBUG` defined so `forge_debug()` prints. It runs `clean` first, so no optimized object files get mixed in.
+
+== asan: CFLAGS += -g3 -O0 -fsanitize=address,undefined
+`make asan` builds with **AddressSanitizer** (catches out-of-bounds access, use-after-free and leaks at runtime) and **UndefinedBehaviorSanitizer** (catches signed overflow, bad shifts and misaligned access). The sanitizers must be passed to the linker too, hence `LDFLAGS`. CI runs the whole test suite against this build with both compilers.
+
+== $(TARGET): $(OBJS) | $(BIN_DIR)
+Linking the shell. `$@` is the target name. Everything after `|` is an *order-only* prerequisite: `bin/` must exist, but its timestamp changing doesn't force a relink.
+
+== $(TEST_PARSER): $(BUILD_DIR)/test_parser.o
+The parser test links only what it needs: the test, the parser and the common helpers. No executor, no `main.c`. That's possible because the parser doesn't depend on the rest of the shell. `$^` means all the prerequisites.
+
+== $(BUILD_DIR)/test_parser.o: $(TEST_DIR)/test_parser.c
+Compiles the test file. `$<` is the first prerequisite.
+
+== $(BIN_DIR)/spin: $(EXAMPLE_DIR)/spin.c
+The demo programs are single files, compiled and linked in one step.
+
+== examples: $(EXAMPLES)
+`make examples` builds just the demo programs.
+
+== $(BUILD_DIR)/%.o: $(SRC_DIR)/%.c | $(BUILD_DIR)
+The pattern rule for every source file. `-MMD -MP` makes the compiler write a `.d` file listing which headers each `.c` included. Those are pulled in by `-include $(DEPS)` at the bottom, so editing `jobs.h` rebuilds every file that includes it. Without this, Make would only notice changes to `.c` files.
+
+== $(BUILD_DIR):
+Create the output folders on demand.
+
+== test: all
+`make test` builds everything, then runs the Python integration suite, which in turn runs the C parser tests.
+
+== clean:
+Removes all build output and the tests' scratch folder.
+
+== help:
+A short reference to the targets.
+
+== -include $(DEPS)
+Pulls in the generated dependency files. The leading `-` ignores missing files, which is the normal state on a fresh checkout before the first build.

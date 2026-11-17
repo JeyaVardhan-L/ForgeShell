@@ -1,0 +1,29 @@
+@title  ProcInfo: one snapshot of a process, assembled from several /proc files.
+@group  Headers
+
+== #ifndef FORGESHELL_PROC_H
+Include guard and common types.
+
+== typedef struct ProcInfo {
+Identity, from `/proc/<pid>/stat`: PID, parent PID, process group, session, the command name (up to 255 characters, though the kernel itself cuts names at 15), the state letter plus its description, and the thread count.
+
+== /* Memory metrics from /proc/<pid>/status */
+Memory figures, all in kB as the kernel reports them. `unsigned long` because sizes are never negative and can be large.
+
+== /* CPU metrics from /proc/<pid>/stat */
+CPU time in clock ticks: `utime` (running the program's code) and `stime` (in the kernel on its behalf). `starttime` is the start time in ticks after boot, so it needs `unsigned long long`.
+
+== /* Runtime metrics */
+The derived values in seconds: total CPU time, and how long the process has existed.
+
+== /* Open file descriptors */
+Number of entries in `/proc/<pid>/fd/`.
+
+== /* Paths */
+`cmdline` is heap-allocated because arguments can be any length. The two paths are fixed `PATH_MAX` buffers inside the struct. That makes `ProcInfo` about 8 KB, which is fine on the stack.
+
+== /* Fetch process information
+The API: fill a snapshot, free it, describe a state letter, plus the three builtins.
+
+== #endif /* FORGESHELL_PROC_H */
+End of the include guard.

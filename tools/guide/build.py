@@ -1,0 +1,184 @@
+#!/usr/bin/env python3
+"""Build the annotated-source data for the ForgeShell guide (docs/).
+
+Every annotated file has a notes file in tools/guide/annotations/, named after
+the source path with "/" replaced by "__" (src/main.c -> src__main.c.txt).
+
+Format of a notes file:
+
+    @title  One-line summary of the file
+    @group  Shell core | Job control | Observability | Headers | Build & tests | Demo programs
+
+    == <anchor>
+    Note text. Blank lines separate paragraphs.
+    Inline markup: `code`, **bold**, *italic*.
+
+    == <next anchor>
+    ...
+
+Each "== anchor" is a piece of text that must appear on a line of the source
+file. Anchors are matched in order, each one searched for after the previous
+one, and a note covers the lines from its anchor up to the next anchor. The
+first anchor must match line 1, so every line of every file is explained.
+
+    python3 tools/guide/build.py           # write docs/assets/source-data.js
+    python3 tools/guide/build.py --check   # fail if that file is out of date
+"""
+import html
+import json
+import os
+import re
+import sys
+
+ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+NOTES_DIR = os.path.join(ROOT, "tools", "guide", "annotations")
+OUT = os.path.join(ROOT, "docs", "assets", "source-data.js")
+
+# Reading order for the guide's source browser.
+FILES = [
+    "src/main.c",
+    "src/parser.c",
+    "src/executor.c",
+    "src/builtins.c",
+    "src/jobs.c",
+    "src/signals.c",
+    "src/proc.c",
+    "src/common.c",
+    "include/common.h",
+    "include/parser.h",
+    "include/executor.h",
+    "include/builtins.h",
+    "include/jobs.h",
+    "include/signals.h",
+    "include/proc.h",
+    "Makefile",
+    "tests/test_parser.c",
+    "tests/test_runner.py",
+    "examples/spin.c",
+    "examples/leak.c",
+    "examples/sigtrap.c",
+    ".github/workflows/ci.yml",
+]
+
+
+class BuildError(Exception):
+    pass
+
+
+def inline(text):
+    out = html.escape(text, quote=False)
+    out = re.sub(r"`([^`]+)`", r"<code>\1</code>", out)
+    out = re.sub(r"\*\*([^*]+)\*\*", r"<strong>\1</strong>", out)
+    out = re.sub(r"(?<![\w*])\*([^*\s][^*]*?)\*(?![\w*])", r"<em>\1</em>", out)
+    return out
+
+
+def to_html(body):
+    paras = [p.strip() for p in re.split(r"\n\s*\n", body.strip()) if p.strip()]
+    return "".join("<p>" + inline(" ".join(p.split("\n"))) + "</p>" for p in paras)
+
+
+def parse_notes(path):
+    meta, notes = {}, []
+    current = None
+    with open(path, encoding="utf-8") as f:
+        for raw in f:
+            line = raw.rstrip("\n")
+            if line.startswith("== "):
+                current = {"anchor": line[3:].strip(), "body": []}
+                notes.append(current)
+            elif current is None:
+                m = re.match(r"@(\w+)\s+(.*)", line)
+                if m:
+                    meta[m.group(1)] = m.group(2).strip()
+            else:
+                current["body"].append(line)
+    return meta, notes
+
+
+def build_file(rel):
+    src_path = os.path.join(ROOT, rel)
+    notes_path = os.path.join(NOTES_DIR, rel.replace("/", "__") + ".txt")
+    if not os.path.exists(notes_path):
+        raise BuildError(f"{rel}: no notes file at {os.path.relpath(notes_path, ROOT)}")
+    with open(src_path, encoding="utf-8") as f:
+        lines = f.read().split("\n")
+    if lines and lines[-1] == "":
+        lines.pop()
+
+    meta, notes = parse_notes(notes_path)
+    for key in ("title", "group"):
+        if key not in meta:
+            raise BuildError(f"{rel}: notes file is missing @{key}")
+    if not notes:
+        raise BuildError(f"{rel}: notes file has no '== anchor' entries")
+
+    starts = []
+    cursor = 0
+    for n in notes:
+        for i in range(cursor, len(lines)):
+            if n["anchor"] in lines[i]:
+                starts.append(i)
+                cursor = i + 1
+                break
+        else:
+            raise BuildError(f"{rel}: anchor not found after line {cursor}: {n['anchor']!r}")
+    if starts[0] != 0:
+        raise BuildError(f"{rel}: first anchor must match line 1, matched line {starts[0] + 1}")
+
+    blocks = []
+    for k, n in enumerate(notes):
+        end = starts[k + 1] - 1 if k + 1 < len(notes) else len(lines) - 1
+        body = "\n".join(n["body"]).strip()
+        if not body:
+            raise BuildError(f"{rel}: empty note for anchor {n['anchor']!r}")
+        blocks.append({"start": starts[k] + 1, "end": end + 1, "html": to_html(body)})
+
+    lang = "c"
+    if rel.endswith(".py"):
+        lang = "python"
+    elif rel == "Makefile":
+        lang = "make"
+    elif rel.endswith(".yml"):
+        lang = "yaml"
+
+    return {
+        "path": rel,
+        "title": meta["title"],
+        "group": meta["group"],
+        "lang": lang,
+        "lines": lines,
+        "blocks": blocks,
+    }
+
+
+def render():
+    files = [build_file(rel) for rel in FILES]
+    data = json.dumps({"files": files}, ensure_ascii=False, separators=(",", ":"))
+    return ("/* Generated by tools/guide/build.py from the repository sources. Do not edit. */\n"
+            "window.FORGE_SOURCE = " + data + ";\n")
+
+
+def main():
+    try:
+        out = render()
+    except BuildError as e:
+        print(f"guide build failed: {e}", file=sys.stderr)
+        return 1
+    if "--check" in sys.argv:
+        current = open(OUT, encoding="utf-8").read() if os.path.exists(OUT) else ""
+        if current != out:
+            print("docs/assets/source-data.js is out of date: run python3 tools/guide/build.py",
+                  file=sys.stderr)
+            return 1
+        print("guide data is up to date")
+        return 0
+    with open(OUT, "w", encoding="utf-8") as f:
+        f.write(out)
+    total = sum(1 for _ in FILES)
+    print(f"wrote {os.path.relpath(OUT, ROOT)} ({total} files)")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

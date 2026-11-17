@@ -1,0 +1,11 @@
+@title  The builtin command interface.
+@group  Headers
+
+== #ifndef FORGESHELL_BUILTINS_H
+Include guard and shared includes.
+
+== /* Returns true if the command name is a ForgeShell builtin */
+`is_builtin` lets the executor decide whether to fork, and `execute_builtin` dispatches by name. Every builtin has the same signature as `main` (`argc`, `argv`) and returns an exit status, so it behaves like a small program that happens to run inside the shell. The job-control and `/proc` builtins are declared in `jobs.h` and `proc.h`, next to the code they belong to.
+
+== #endif /* FORGESHELL_BUILTINS_H */
+End of the include guard.

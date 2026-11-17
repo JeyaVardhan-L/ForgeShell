@@ -1,0 +1,21 @@
+@title  Demo program: sleeps or burns CPU for a while, so there's something to watch with jobs, monitor and Ctrl+Z.
+@group  Demo programs
+
+== #define _POSIX_C_SOURCE 200809L
+`_POSIX_C_SOURCE` makes `sleep`, `getpid` and `sig_atomic_t` visible under `-std=c11`. `g_running` is the usual handler-to-main-loop flag.
+
+== static void sig_handler(int sig) {
+Handles Ctrl+C and `kill` by printing a message and letting the loop end, which shows that a program can *catch* `SIGINT` and exit politely instead of dying.
+
+Calling `printf` in a handler isn't async-signal-safe (see `src/signals.c`). For a demo program that's only interrupted while sleeping or spinning it works in practice, but production code would use `write()` or just set the flag.
+
+== int main(int argc, char **argv) {
+`spin [count] [mode]`: `count` rounds (default 10). Mode `1` means burn CPU, otherwise sleep a second per round.
+
+`signal()` here, rather than `sigaction`, is fine for a demo. Note what's *missing*: there's no `SIGTSTP` handler, so Ctrl+Z uses the default action and stops the process, which is exactly what the job-control demo needs.
+
+== for (int i = 0; i < seconds && g_running; i++) {
+In CPU mode, each round is 250 million iterations of an empty loop on a `volatile` counter. `volatile` forces every increment to really happen, otherwise `-O2` would delete the loop as useless. A round is *not* a second: on a modern CPU it takes about 0.1 s, which is why the demo uses `spin 600 1`. `monitor` shows this mode at about 100% CPU, one full core.
+
+== printf("[spin] PID %d finished.\n", (int)getpid());
+Prints a final line so you can see in the terminal when a background `spin` finishes.

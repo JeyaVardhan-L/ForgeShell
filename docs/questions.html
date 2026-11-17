@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>ForgeShell questions</title>
+<meta name="description" content="Interview questions about ForgeShell and Unix systems programming, with short direct answers.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,500;0,8..60,600;0,8..60,700;1,8..60,400&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="index.html">ForgeShell <span>/ field guide</span></a>
+  <nav class="nav">
+    <a href="index.html">Guide</a>
+    <a href="source.html">Source</a>
+    <a href="questions.html" aria-current="page">Questions</a>
+    <a href="https://github.com/JeyaVardhan-L/ForgeShell">GitHub</a>
+  </nav>
+</header>
+
+<main class="qpage">
+  <div class="qhead">
+    <p class="eyebrow" style="margin:0">Use &uarr; &darr; or scroll the list</p>
+    <div class="cats" id="cats" role="group" aria-label="Filter by topic"></div>
+  </div>
+  <div class="qgrid">
+    <div class="wheel" id="wheel" tabindex="0" aria-label="Questions">
+      <div class="wheel-track" id="track"></div>
+      <div class="wheel-fade top"></div>
+      <div class="wheel-fade bottom"></div>
+    </div>
+    <div>
+      <h1 class="qtitle">Common Questions.</h1>
+      <div class="qmobile" style="margin-bottom:14px">
+        <button class="btn" type="button" id="mprev" aria-label="Previous question">&uarr;</button>
+        <select id="mselect" aria-label="Choose a question"></select>
+        <button class="btn" type="button" id="mnext" aria-label="Next question">&darr;</button>
+      </div>
+      <article class="card" aria-live="polite">
+        <div class="row"><span class="lab">IN:</span><span class="q" id="qtext"></span></div>
+        <div class="row"><span class="lab">OUT:</span><div class="answer" id="atext"></div></div>
+      </article>
+      <div class="card-foot"><span id="qpos"></span><a id="qsrc" class="srclink" href="#">read the code</a></div>
+    </div>
+  </div>
+  <footer class="footer">
+    <span>ForgeShell &middot; MIT licence</span>
+    <span><a href="index.html">Guide</a> &middot; <a href="source.html">Source, annotated</a> &middot; <a href="https://github.com/JeyaVardhan-L/ForgeShell">GitHub</a></span>
+  </footer>
+</main>
+
+<script src="assets/site.js"></script>
+<script src="assets/questions-data.js"></script>
+<script src="assets/questions.js"></script>
+</body>
+</html>

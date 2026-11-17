@@ -1,0 +1,14 @@
+@title  Signal setup for the shell and its children.
+@group  Headers
+
+== #ifndef FORGESHELL_SIGNALS_H
+Include guard, plus `signal.h` for `sigaction`, `sigset_t` and the signal numbers.
+
+== extern volatile sig_atomic_t g_sigchld_flag;
+The flag the `SIGCHLD` handler sets, declared `extern` so other files *could* read it. None do (see `signals.c`).
+
+== /* Set up signal disposition
+Two calls, one for each side of `fork()`: `signals_init_shell` once at startup in the shell, and `signals_reset_child` in every child before `exec`.
+
+== #endif /* FORGESHELL_SIGNALS_H */
+End of the include guard.

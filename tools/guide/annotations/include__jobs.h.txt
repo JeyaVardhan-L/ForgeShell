@@ -1,0 +1,31 @@
+@title  Job and Process records and the job-control API.
+@group  Headers
+
+== #ifndef FORGESHELL_JOBS_H
+`termios.h` is included because each `Job` has room for its own terminal settings.
+
+== typedef enum {
+The three states a job or process can be in: running, stopped (Ctrl+Z, `SIGTTIN`), or done.
+
+== typedef struct Process {
+One OS process, one pipeline stage. `status` holds the raw `waitpid` status word. `completed` and `stopped` are the flags the job-level checks combine. The `struct Process` name before the typedef lets `next` refer to the type while it's still being defined.
+
+== typedef struct Job {
+One job, meaning one process group. `pgid` is the group every process in the job belongs to, and it's what `tcsetpgrp`, `kill(-pgid)` and `waitpid(-pgid)` target. `command_str` is for display. `notified` makes sure a stop is reported only once.
+
+`tmodes` is never used: a full shell would save a stopped job's terminal settings here and restore them on `fg`, so `vim` comes back in the right mode. ForgeShell restores only the shell's own settings.
+
+== /* Job manager functions */
+Table management: create, add a process, find, remove, free.
+
+== /* Job control actions */
+The job-control core: wait for a job, foreground or background it (`cont` = also send `SIGCONT`), and the before-prompt reaper.
+
+== /* Check if all processes in job completed */
+Job-level state worked out from the per-process flags.
+
+== /* Builtin job commands */
+`jobs`, `fg` and `bg` live in `jobs.c` because they need the private job list.
+
+== #endif /* FORGESHELL_JOBS_H */
+End of the include guard.
