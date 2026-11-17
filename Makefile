@@ -70,7 +70,7 @@ help:
 	@echo "  make        - Build forge shell, test binaries, and example workloads"
 	@echo "  make debug  - Build debug binary with symbols and DEBUG macro"
 	@echo "  make asan   - Build with AddressSanitizer and UndefinedBehaviorSanitizer"
-	@echo "  make test   - Run automated test suite (24 test suites)"
+	@echo "  make test   - Run automated test suite (26 checks)"
 	@echo "  make clean  - Remove all build and test artifacts"
 
 -include $(DEPS)

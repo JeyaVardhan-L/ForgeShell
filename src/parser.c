@@ -329,5 +329,15 @@ JobPipeline *parse_pipeline(const char *input_line) {
         return NULL;
     }
 
+    /* Every later stage needs a command too: "ls | > out.txt" has none after
+     * the pipe, and running it would mean execvp(NULL). */
+    for (Command *c = pipeline->first_cmd->next; c; c = c->next) {
+        if (c->argc == 0) {
+            forge_error("syntax error: missing command after '|'");
+            free_pipeline(pipeline);
+            return NULL;
+        }
+    }
+
     return pipeline;
 }

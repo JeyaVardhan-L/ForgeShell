@@ -142,6 +142,7 @@ static void test_syntax_errors(void) {
     assert(parse_pipeline("cat 2>") == NULL);
     assert(parse_pipeline("echo 'unclosed quote") == NULL);
     assert(parse_pipeline("echo \"unclosed quote") == NULL);
+    assert(parse_pipeline("ls | > out.txt") == NULL);
     PASS("test_syntax_errors");
 }
 

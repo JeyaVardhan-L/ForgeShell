@@ -4,16 +4,26 @@
 #include <ctype.h>
 
 static Job *g_job_list = NULL;
-static int g_next_job_id = 1;
 
 void jobs_init(void) {
     g_job_list = NULL;
-    g_next_job_id = 1;
+}
+
+/* Job IDs work like Bash: one more than the highest ID still in the table,
+ * so numbering restarts at 1 once every job has finished. */
+static int next_job_id(void) {
+    int max_id = 0;
+    for (Job *j = g_job_list; j; j = j->next) {
+        if (j->id > max_id) {
+            max_id = j->id;
+        }
+    }
+    return max_id + 1;
 }
 
 Job *job_create(pid_t pgid, const char *cmd_str) {
     Job *job = xmalloc(sizeof(Job));
-    job->id = g_next_job_id++;
+    job->id = next_job_id();
     job->pgid = pgid;
     job->state = JOB_STATE_RUNNING;
     job->command_str = xstrdup(cmd_str);
@@ -192,6 +202,15 @@ int wait_for_job(Job *job) {
 
     if (job_is_completed(job)) {
         job->state = JOB_STATE_DONE;
+        /* Like Bash, a pipeline's status is the status of its last command,
+         * not of whichever process happened to be reaped last. */
+        Process *last = job->first_process;
+        while (last && last->next) {
+            last = last->next;
+        }
+        if (last) {
+            last_status = last->status;
+        }
         if (WIFEXITED(last_status)) {
             g_shell.last_exit_status = WEXITSTATUS(last_status);
         } else if (WIFSIGNALED(last_status)) {
@@ -207,6 +226,7 @@ int wait_for_job(Job *job) {
         }
     } else if (job_is_stopped(job)) {
         job->state = JOB_STATE_STOPPED;
+        job->notified = true; /* reported here, so check_and_notify_jobs() stays quiet */
         printf("\n[%d]+ Stopped                 %s\n", job->id, job->command_str);
         g_shell.last_exit_status = 128 + SIGTSTP;
     }
@@ -227,6 +247,7 @@ int put_job_in_foreground(Job *job, bool cont) {
     /* If reviving a stopped job, send SIGCONT */
     if (cont) {
         job->state = JOB_STATE_RUNNING;
+        job->notified = false;
         for (Process *p = job->first_process; p; p = p->next) {
             p->stopped = false;
         }
@@ -262,6 +283,7 @@ int put_job_in_background(Job *job, bool cont) {
 
     job->state = JOB_STATE_RUNNING;
     if (cont) {
+        job->notified = false;
         for (Process *p = job->first_process; p; p = p->next) {
             p->stopped = false;
         }

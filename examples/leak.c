@@ -13,21 +13,26 @@ int main(int argc, char **argv) {
     fflush(stdout);
 
     size_t bytes = (size_t)mb * 1024 * 1024;
-    char *buf = malloc(bytes);
+    /* volatile: the writes below are never read back, so without it an
+     * optimizing compiler (-O2) is allowed to delete the malloc, the writes
+     * and the free entirely, and the process would never grow. */
+    volatile char *buf = malloc(bytes);
     if (!buf) {
         perror("malloc");
         return 1;
     }
 
-    /* Touch memory pages to make them resident in RSS */
-    memset(buf, 0x42, bytes);
+    /* Touch every page so the kernel actually backs it with RAM (VmRSS) */
+    for (size_t i = 0; i < bytes; i += 4096) {
+        buf[i] = 0x42;
+    }
 
     printf("[leak] Memory touched. Check VmRSS in /proc/%d/status now!\n", (int)getpid());
     fflush(stdout);
 
     sleep(hold_sec);
 
-    free(buf);
+    free((void *)buf);
     printf("[leak] PID %d done.\n", (int)getpid());
     return 0;
 }

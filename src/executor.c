@@ -21,9 +21,12 @@ void shell_init(void) {
         /* Set up signal dispositions for interactive shell */
         signals_init_shell();
 
-        /* Place shell into its own process group */
+        /* Place shell into its own process group. A session leader (e.g. a
+         * shell started directly by a terminal emulator) already leads its
+         * group, and setpgid() on a session leader fails with EPERM. */
         g_shell.shell_pgid = getpid();
-        if (setpgid(g_shell.shell_pgid, g_shell.shell_pgid) < 0) {
+        if (getpgrp() != g_shell.shell_pgid &&
+            setpgid(g_shell.shell_pgid, g_shell.shell_pgid) < 0) {
             forge_perror("setpgid");
         }
 

@@ -148,6 +148,13 @@ def test_large_pipeline_no_deadlock():
     code, out, err = run_shell("yes 'systems programming' | head -n 30000 | wc -l\n")
     assert "30000" in out, f"Expected 30000 in output, got: {out}"
 
+def test_pipeline_exit_status():
+    # A pipeline's status is its last command's, whichever process exits last.
+    code, out, err = run_shell("sleep 0.3 | false\n")
+    assert code == 1, f"Expected 1 from 'sleep | false', got {code}"
+    code, out, err = run_shell("false | sleep 0.3\n")
+    assert code == 0, f"Expected 0 from 'false | sleep', got {code}"
+
 def test_descriptor_closure():
     # Verify file descriptors are not leaked after multiple commands
     script = """
@@ -207,6 +214,11 @@ jobs
     code, out, err = run_shell(script)
     assert "Running" in out
     assert "Done" in out
+
+def test_job_numbering():
+    # Foreground commands must not consume job numbers.
+    code, out, err = run_shell("/bin/true\n/bin/true\nsleep 0.3 &\nsleep 0.5\n")
+    assert "[1] " in out, f"Expected first background job to be [1], got: {out}"
 
 def test_fg_builtin():
     script = """
@@ -272,6 +284,7 @@ def main():
     run_test("Single pipe (cmd1 | cmd2)", test_single_pipe)
     run_test("Multi-pipe chain (3 stages)", test_multiple_pipes)
     run_test("Large stream buffer (30k lines)", test_large_pipeline_no_deadlock)
+    run_test("Pipeline exit status (last command)", test_pipeline_exit_status)
     run_test("File descriptor leak verification", test_descriptor_closure)
 
     print(f"\n{BOLD}[Category 5: Builtins]{RESET}")
@@ -281,6 +294,7 @@ def main():
 
     print(f"\n{BOLD}[Category 6: Job Control]{RESET}")
     run_test("Background jobs (&, jobs, reap)", test_background_job_and_reaping)
+    run_test("Job numbering starts at [1]", test_job_numbering)
     run_test("Builtin fg foreground transfer", test_fg_builtin)
 
     print(f"\n{BOLD}[Category 7: Linux /proc Observability]{RESET}")
