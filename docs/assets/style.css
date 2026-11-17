@@ -109,6 +109,27 @@ img { max-width: 100%; height: auto; }
 }
 .nav a:hover, .nav a[aria-current="page"] { color: var(--ink); }
 
+/* ---------- back links ---------- */
+
+.backbar { max-width: var(--wide); margin: 28px auto 0; }
+.backbar + .divider { margin-top: 40px; }
+.backlink {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--mono);
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+  text-decoration: none;
+  padding: 6px 10px 6px 0;
+  transition: color 0.15s, gap 0.15s;
+}
+.backlink:hover { color: var(--blue); gap: 12px; }
+.files .backlink { margin: 0 0 16px; }
+.qpage .backlink { margin-bottom: 18px; }
+
 /* ---------- layout ---------- */
 
 .page { padding: 0 24px; }
