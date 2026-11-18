@@ -604,7 +604,7 @@
     }
 
     let steps = simulate();
-    const svgWrap = el("div");
+    const svgWrap = el("div", { class: "fig-scroll" });
     const table = el("div", { style: "overflow-x:auto;margin-top:12px" });
     const codeBox = el("div", { class: "excerpt", style: "margin:12px 0 0" }, el("pre", {}));
     const text = el("div", { class: "readout" });
@@ -909,7 +909,7 @@
     let order = "parent", both = true;
     const oBtns = [["parent", "parent runs first"], ["child", "child runs first"]].map(([k, l]) => el("button", { class: "btn", type: "button", text: l, onclick: () => { order = k; draw(); } }));
     const bBtn = el("button", { class: "btn", type: "button", text: "parent also calls setpgid", onclick: () => { both = !both; draw(); } });
-    const svgWrap = el("div");
+    const svgWrap = el("div", { class: "fig-scroll" });
     const out = el("div", { class: "readout" });
     body.append(el("div", { class: "controls" }, oBtns, el("span", { class: "spacer" }), bBtn), svgWrap, out);
 
@@ -1170,6 +1170,13 @@
     const body = fig.querySelector(".fig-body");
     try {
       if (figures[name]) figures[name](body);
+      // Wide diagrams sit in a sideways scroller so phones can show them at a
+      // readable size (see .fig-scroll in style.css). Desktop is unaffected.
+      body.querySelectorAll(":scope > svg").forEach((svg) => {
+        const wrap = el("div", { class: "fig-scroll" });
+        svg.replaceWith(wrap);
+        wrap.appendChild(svg);
+      });
     } catch (err) {
       body.textContent = "This figure failed to load.";
       console.error(name, err);

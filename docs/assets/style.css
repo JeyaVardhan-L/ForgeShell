@@ -731,6 +731,113 @@ input[type="range"] { width: 100%; accent-color: var(--blue); }
   .divider { margin: 72px auto 40px; }
 }
 
+/* ---------- phones ----------
+   Everything above stays as the desktop design. This block only reflows it
+   for narrow screens: one-line top bar, readable diagrams, nothing wider
+   than the screen. */
+@media (max-width: 640px) {
+  /* wide diagrams: keep them at a readable size and let them scroll sideways */
+  .fig-scroll {
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: thin;
+  }
+  .fig-scroll::before {
+    content: "swipe \2192";
+    position: sticky;
+    left: 0;
+    display: block;
+    width: max-content;
+    margin-bottom: 6px;
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--faint);
+  }
+  [data-fig="loop"] .fig-scroll > svg { min-width: 800px; }
+  [data-fig="fds"] .fig-scroll > svg { min-width: 610px; }
+  [data-fig="pipes"] .fig-scroll > svg { min-width: 720px; }
+  [data-fig="race"] .fig-scroll > svg { min-width: 750px; }
+  [data-fig="cpu"] .fig-scroll > svg,
+  [data-fig="memory"] .fig-scroll > svg { min-width: 600px; }
+
+  .fig { margin: 32px auto; }
+  .fig figcaption, .fig .caption { font-size: 14.5px; }
+}
+
+@media (max-width: 560px) {
+  html { scroll-padding-top: 56px; }
+
+  /* top bar on one line */
+  .topbar { padding-top: calc(12px + env(safe-area-inset-top, 0px)); padding-bottom: 12px; gap: 10px; }
+  .brand { font-size: 11px; letter-spacing: 0.06em; }
+  .nav { flex-wrap: nowrap; gap: 12px; }
+  .nav a { font-size: 10.5px; letter-spacing: 0.04em; }
+
+  /* cover and chapter heads */
+  .cover { padding-block: 6vh 3vh; }
+  .cover h1 { font-size: clamp(34px, 10.5vw, 44px); margin-bottom: 22px; }
+  .columns { font-size: 16.5px; }
+  .chapter-head { margin-bottom: 28px; }
+  .chapter-head .lede { font-size: 18px; }
+  .backbar { margin-top: 18px; }
+  .backbar + .divider { margin-top: 28px; }
+  .divider { gap: 12px; white-space: normal; text-align: center; }
+
+  /* long inline code may wrap instead of pushing the page wider */
+  p code, li code, td code, .note code, .answer code, figcaption code, dd code { white-space: normal; overflow-wrap: anywhere; }
+
+  .toc .t { font-size: 18px; }
+  .toc a { padding: 12px 0; }
+
+  /* figure internals */
+  .fig-body { padding: 12px; }
+  .controls { gap: 6px; }
+  .btn { padding: 8px 10px; font-size: 11px; }
+  .readout { padding: 12px 13px; font-size: 15.5px; }
+  .cmd { flex-basis: 100%; }
+  .pipe-arrow { width: 100%; text-align: center; }
+  .terminal { font-size: 12px; }
+  .bits, .bitlabels, .bitbands { gap: 2px; }
+  .bits, .bitlabels { grid-template-columns: repeat(16, minmax(0, 1fr)); }
+  .bit { font-size: 11px; border-radius: 2px; }
+  .bitlabels { font-size: 8px; }
+  .bitbands { font-size: 8.5px; letter-spacing: 0.03em; }
+  .sigtable { font-size: 14px; }
+  .sigtable th, .sigtable td { padding: 8px 6px; }
+  .sigtable td:first-child { font-size: 11.5px; }
+
+  .excerpt pre { font-size: 12px; padding: 12px; }
+  .excerpt header { flex-wrap: wrap; padding: 8px 12px; }
+  .qa .row, .card .row { padding: 12px 14px; }
+  .qa .a p, .answer { font-size: 16.5px; }
+
+  .pager { flex-direction: column; gap: 10px; }
+  .pager a:last-child { text-align: right; }
+  .footer { margin-top: 80px; flex-direction: column; }
+
+  /* source reader: keep the file list short so the code is reachable */
+  .files { padding: 14px 16px; }
+  .files nav { max-height: 190px; overflow-y: auto; }
+  .listing-head h1 { font-size: 24px; }
+  .code { font-size: 12px; }
+  .code .ln { width: 2.8em; padding-right: 0.8em; }
+  .note { font-size: 14.5px; }
+
+  /* questions page */
+  .qpage { padding: 4vh 16px 0; }
+  .qhead { margin-bottom: 14px; }
+}
+
+@media (max-width: 360px) {
+  .brand { font-size: 10px; }
+  .nav { gap: 9px; }
+  .nav a { font-size: 9.5px; letter-spacing: 0.02em; }
+  .bit { font-size: 10px; }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
